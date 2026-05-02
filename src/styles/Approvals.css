@@ -1,0 +1,39 @@
+.approvals-page { display: flex; flex-direction: column; gap: 18px; }
+
+.approvals-summary {
+  display: flex;
+  gap: 0;
+}
+.appr-sum-item {
+  flex: 1;
+  text-align: center;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+}
+.appr-sum-item:last-child { border-right: none; }
+.appr-sum-num   { display: block; font-size: 26px; font-weight: 800; color: var(--blue); }
+.appr-sum-label { display: block; font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+
+.approval-list { display: flex; flex-direction: column; gap: 0; }
+.approval-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.approval-item:last-child { border-bottom: none; }
+
+.appr-info { flex: 1; min-width: 0; }
+.appr-name   { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.appr-detail { font-size: 12px; color: var(--text-sub); }
+.appr-note   { font-size: 12px; color: var(--green); margin-top: 3px; }
+
+.appr-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+@media (max-width: 480px) {
+  .approval-item { flex-direction: column; }
+  .appr-actions { width: 100%; }
+  .btn-approve, .btn-reject { flex: 1; text-align: center; }
+}

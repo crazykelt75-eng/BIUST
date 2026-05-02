@@ -1,0 +1,37 @@
+.contrib-page { display: flex; flex-direction: column; gap: 18px; }
+
+.contrib-summary { background: linear-gradient(135deg, var(--blue), #7c9dff); color: #fff; }
+.contrib-sum-label { font-size: 12px; opacity: .8; margin-bottom: 4px; }
+.contrib-sum-amount { font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+.contrib-sum-sub { font-size: 12px; opacity: .75; }
+
+.contrib-form { display: flex; flex-direction: column; gap: 14px; }
+.contrib-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.contrib-table-wrap { overflow-x: auto; }
+.contrib-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.contrib-table th {
+  background: var(--blue-light);
+  color: var(--text-sub);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+.contrib-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.contrib-table tr:last-child td { border-bottom: none; }
+.ref-td { color: var(--text-sub); font-size: 12px; }
+
+@media (max-width: 480px) {
+  .contrib-form-grid { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,324 @@
+1. Create Figma project (share with team)
+2. Build low-fi wireframes (all pages, mobile first)
+3. Get team approval on user flow
+4. Build component library
+5. Apply high-fi styling
+6. Create prototype links
+7. Export CSS variables
+8. Start coding React
+
+Quick Start Template for Figma
+Create these frames immediately:
+
+Frame 1: Login (member + signatory toggle)
+
+Frame 2: Dashboard (cards: total contributions, active loans, pending approvals)
+
+Frame 3: Submit Contribution (month picker, amount, upload)
+
+Frame 4: Approvals List (table with Approve/Reject buttons)
+
+Frame 5: Loan Request (amount, purpose, submit)
+
+Frame 6: Year-End Report (download PDF button + data table)
+
+Frame 7: Mobile menu (bottom navigation)
+
+
+
+
+
+
+
+
+----------------------------------------------------------------------------------
+
+
+Revised Step-by-Step Plan (Re-Mmogo Web App)
+Phase 0: Project Kickoff (1–2 hours)
+Read the full spec again as a team.
+
+Identify all user roles: Member, Signatory (two per group), Group Admin (could be a signatory).
+
+List all core actions:
+
+Register group
+
+Enroll member
+
+Record monthly contribution (member initiates → signatories approve)
+
+Record loan request (member → signatories approve)
+
+Record loan repayment (member initiates → signatories approve)
+
+View balances
+
+Generate year-end report (interest totals, payouts)
+
+Decide on tech stack (React, Node/Express, SQL Server, JWT, deployment platform).
+
+Phase 1: Figma Wireframes & Prototypes (5–7 hours) – DO THIS FIRST
+Step 1.1 – Page Inventory & User Flows
+Create a flow diagram (can be in Figma or Miro):
+
+Landing → Login (role selection) → Dashboard
+
+Member flow: Dashboard → Submit Contribution → Upload proof → Success
+
+Signatory flow: Dashboard → Pending Approvals → Approve/Reject → Success
+
+Loan flow: Member → Request Loan → Signatory 1 approves → Signatory 2 approves → Disbursed
+
+Year-end report: Any user → Reports page → View/download
+
+Step 1.2 – Low-Fidelity Wireframes (grayscale, boxes only)
+Create frames for mobile (375px) first, then tablet/desktop:
+
+Login/Register
+
+Register Group (first group creation)
+
+Dashboard (key metrics, pending approvals badge)
+
+Members List + Enroll Member form
+
+Contributions page (member view: submit payment; signatory view: approvals)
+
+Loans page (request loan, view active loans, make repayment)
+
+Approvals Dashboard (signatory only: list of pending contributions & loans)
+
+Year-End Report (table + export)
+
+Profile / Settings
+
+Step 1.3 – High-Fidelity Mockups
+Apply colour scheme (finance: blues, greens, white background).
+
+Define typography (sans-serif, 16px body).
+
+Create reusable components: buttons, cards, tables, approval badges, file uploader.
+
+Show two-signatory approval status (e.g., “Approved by Signatory 1 / 2 pending”).
+
+Step 1.4 – Clickable Prototype
+Link pages in Figma to simulate:
+
+Member submits contribution → pending approval → signatory approves → contribution reflects.
+
+This reveals missing screens (e.g., “Approval pending” feedback page).
+
+Deliverable: Figma link shared with team and instructor (for grading).
+
+Phase 2: Database Design (3–4 hours)
+Now that wireframes show exactly what data each page needs, design the SQL schema.
+
+Tables (example):
+
+users (id, group_id, name, email, password_hash, role, is_signatory)
+
+groups (id, name, created_at, total_contributions)
+
+contributions (id, member_id, amount, month, year, proof_image_url, status, approved_by_1, approved_by_2)
+
+loans (id, member_id, amount, balance, interest_rate_per_month, status, approved_by_1, approved_by_2)
+
+loan_payments (id, loan_id, amount, proof_image_url, status, approved_by_1, approved_by_2)
+
+approval_logs (id, entity_type, entity_id, signatory_id, action, timestamp)
+
+year_end_reports (id, group_id, year, data_json)
+
+Business rules enforced at DB level (via constraints/triggers or app logic):
+
+Contribution amount = P1000 fixed.
+
+Loan interest = 20% of remaining balance per month (calculated on the fly).
+
+Each member’s total interest paid must reach P5000 by year-end (report check).
+
+Deliverable: SQL script (CREATE statements) + ER diagram (can be drawn in Figma or dbdiagram.io).
+
+Phase 3: Backend Development (Node.js + Express) – 8–10 hours
+Step 3.1 – Setup
+Project structure (routes, controllers, models, middleware, utils).
+
+Environment variables (.env): DB connection, JWT secret, port.
+
+Step 3.2 – Authentication & Authorization
+Register (creates group + first signatory).
+
+Login (returns JWT with role and group_id).
+
+Middleware: verifyToken, isMember, isSignatory.
+
+Step 3.3 – Core API Endpoints (RESTful)
+Method	Endpoint	Description
+POST	/api/groups	Register new motshelo group
+POST	/api/groups/:groupId/members	Enroll member (signatory only)
+POST	/api/contributions	Member initiates contribution (status=pending)
+PUT	/api/contributions/:id/approve	Signatory approves (needs two distinct approvals)
+POST	/api/loans	Member requests loan
+PUT	/api/loans/:id/approve	Signatory approves loan
+POST	/api/loans/:id/payments	Member repays loan (pending approval)
+PUT	/api/loan-payments/:id/approve	Signatory approves repayment
+GET	/api/reports/year-end/:groupId?year=2026	Generate report (interest, payouts)
+Step 3.4 – Critical Business Logic
+Loan interest: Create a scheduled job (node-cron) or compute at report time:
+new_balance = previous_balance * 1.20 (monthly).
+
+Two-signatory approval: Track approval count; only allow second signatory if different from first.
+
+Year-end report logic:
+
+Sum contributions per member.
+
+Sum interest paid per member (loan payments – principal portion).
+
+Identify member with most/least interest.
+
+Ensure each member reached P5000 interest (flag if not).
+
+Calculate final payout = total contributions + interest earned (or minus losses).
+
+Deliverable: Backend code with Postman/Thunder Client tests for each endpoint.
+
+Phase 4: Frontend Development (React) – 10–12 hours
+Use the Figma designs as the exact blueprint.
+
+Step 4.1 – Setup
+Vite + React + React Router.
+
+Axios for API calls.
+
+Context API or Zustand for auth state.
+
+CSS: Tailwind or plain CSS modules (responsive).
+
+Step 4.2 – Build Pages (in order of dependency)
+Auth pages (Login, RegisterGroup)
+
+Dashboard (show pending approvals, group summary)
+
+Members (list + enroll form with validation)
+
+Contributions (member: month picker + file upload; signatory: approval buttons)
+
+Loans (request loan, view active loans with interest, repayment form)
+
+Approvals Dashboard (signatory only – shows pending contributions and loans)
+
+Year-End Report (fetch and display table, highlight top earner)
+
+Profile (optional)
+
+Step 4.3 – Implement Key Features
+Form validation (React Hook Form) – amount, month selection, file size.
+
+File upload for proof-of-payment (store as URL or base64).
+
+Real-time approval status – show “awaiting 2nd approval” badge.
+
+Responsive layout – mobile menu, grid/flex.
+
+Deliverable: Frontend code that consumes the backend APIs.
+
+Phase 5: Integration & Testing (3–4 hours)
+Configure CORS in backend to accept frontend URL.
+
+Test full flows:
+
+Member: Register → Login → Submit contribution → Logout
+
+Signatory 1: Login → Approve contribution (1/2) → Logout
+
+Signatory 2: Login → Approve contribution (2/2) → Verify contribution marked “approved”
+
+Loan: Member requests loan → Two signatories approve → Member repays → Two signatories approve repayment
+
+Report: Generate year-end report – check P5000 interest rule and 20% interest calculation.
+
+Handle edge cases: duplicate monthly contribution, insufficient balance for loan repayment, non-signatory trying to approve.
+
+Write unit tests for interest calculation and approval logic (optional but good).
+
+Phase 6: Deployment (3–4 hours)
+Backend
+Choose platform: Render, Railway, or AWS EC2.
+
+Set up environment variables (DB URL, JWT secret).
+
+Push code to GitHub, connect to deploy.
+
+Database
+Use cloud SQL (e.g., Aiven for MySQL, Supabase (PostgreSQL), or Railway managed DB).
+
+Run migration scripts.
+
+Frontend
+Deploy to Vercel or Netlify.
+
+Set environment variable for API URL (e.g., VITE_API_URL).
+
+Final checks
+Live URL works on mobile and desktop.
+
+CORS allows production frontend.
+
+HTTPS enabled.
+
+Deliverable: Live URL submitted.
+
+Phase 7: Documentation & Presentation (4–5 hours)
+README.md (must include)
+Project description (Re-Mmogo problem statement)
+
+Tech stack (React, Node, SQL, JWT, deployment platform)
+
+Setup instructions (clone, install, .env example, run locally)
+
+Live URL
+
+Test credentials (one member, one signatory)
+
+Screenshots (or link to Figma)
+
+Presentation Slides (PPTX/PDF)
+Title slide + team members
+
+Problem & solution overview
+
+Architecture diagram (frontend → backend → DB)
+
+Key features (with screenshots from Figma or live app)
+
+Demo script (10–15 min) – show the full loan + approval flow
+
+Challenges & how you solved them (e.g., two-signatory logic, 20% interest)
+
+Future improvements
+
+Final Submission
+Figma link
+
+GitHub repo (backend + frontend in same or separate repos – clearly linked)
+
+Live URL
+
+README
+
+Presentation slides
+
+Summary Timeline (For a 2–3 week project)
+Phase	Hours	Team Member Split
+Phase 0 – Kickoff	2	All
+Phase 1 – Figma	7	1 designer + all review
+Phase 2 – DB	4	1 backend dev
+Phase 3 – Backend	10	2 backend devs
+Phase 4 – Frontend	12	2 frontend devs
+Phase 5 – Integration	4	All
+Phase 6 – Deployment	4	1 dev ops + all test
+Phase 7 – Docs & Pres	5	1 doc + all present
+Total	48	Spread across team of 4–5
+

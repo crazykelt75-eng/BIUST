@@ -1,0 +1,138 @@
+.register-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #87ceeb 0%, #98d8a0 70%, #3a7d3f 100%);
+  font-family: Arial, sans-serif;
+  position: relative;
+}
+
+.topbar {
+  background: #dce6fb;
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topbar-logo {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.topbar-icon {
+  font-size: 18px;
+}
+
+.register-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 16px;
+  min-height: calc(100vh - 60px);
+}
+
+.register-card {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.card-head h3 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.close-x {
+  font-size: 22px;
+  cursor: pointer;
+  color: #666;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.register-form label {
+  font-size: 14px;
+  font-weight: bold;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.register-form input {
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  background: white;
+}
+
+.register-form input:focus {
+  outline: 2px solid #c9185e;
+}
+
+.btn-register {
+  background: #c9185e;
+  color: white;
+  border: none;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 18px;
+}
+
+.btn-register:hover {
+  background: #a31250;
+}
+
+.btn-register:disabled {
+  background: #d98db0;
+}
+
+.form-msg {
+  text-align: center;
+  font-size: 13px;
+  margin-top: 10px;
+  color: #c9185e;
+}
+
+.login-link {
+  text-align: center;
+  font-size: 13px;
+  margin-top: 14px;
+}
+
+.login-link a {
+  color: #c9185e;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+
+/* TABLET + DESKTOP - larger card, more breathing room */
+@media (min-width: 768px) {
+  .register-wrap {
+    padding: 80px 16px;
+  }
+
+  .register-card {
+    padding: 32px;
+    max-width: 480px;
+  }
+
+  .card-head h3 {
+    font-size: 26px;
+  }
+}

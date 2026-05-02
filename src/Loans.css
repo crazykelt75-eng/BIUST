@@ -1,0 +1,40 @@
+.repay-btn {
+  background: #10B981;
+  color: white;
+  border: none;
+  padding: 10px;
+  border-radius: 6px;
+  width: 100%;
+  margin-top: 15px;
+  cursor: pointer;
+}
+
+.repay-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.repay-form input {
+  flex: 2;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.repay-form button {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.repay-form button:first-of-type {
+  background: #3B82F6;
+  color: white;
+}
+
+.repay-form button:last-of-type {
+  background: #9CA3AF;
+  color: white;
+}

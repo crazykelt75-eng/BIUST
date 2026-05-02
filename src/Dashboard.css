@@ -1,0 +1,382 @@
+.dashboard-page {
+  min-height: 100vh;
+  background: #e8eefc;
+  font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* topbar */
+.topbar {
+  background: #a9c0ff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 2px solid #7a9bff;
+}
+
+.menu-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.topbar-logo {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  font-size: 18px;
+}
+
+/* sidebar - overlay on mobile, fixed on desktop */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 260px;
+  height: 100%;
+  background: #c9c9c9;
+  z-index: 10;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.2);
+}
+
+.sidebar-top {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.sidebar-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.logo-icon {
+  font-size: 40px;
+}
+
+.sidebar-logo p {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.sidebar-menu {
+  list-style: none;
+}
+
+.sidebar-menu li {
+  padding: 10px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.sidebar-menu li:hover {
+  background: #a9c0ff;
+}
+
+.sidebar-menu li.active {
+  background: #7a9bff;
+  color: white;
+  font-weight: bold;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+}
+
+@media (max-width: 1023px) {
+  .sidebar {
+    display: none;
+  }
+}
+.logout-btn {
+  background: white;
+  border: 1px solid #999;
+  padding: 8px 12px;
+  width: 100%;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+
+/* content */
+.content {
+  padding: 16px;
+  flex: 1;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.welcome-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.welcome-row h3 {
+  font-size: 18px;
+}
+
+.date {
+  font-size: 13px;
+  color: #c9185e;
+  font-weight: bold;
+}
+
+
+/* stats grid - 3 cols on mobile too since they're compact */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.stat-card {
+  background: #bcd0ff;
+  padding: 14px 10px;
+  border-radius: 8px;
+  text-align: center;
+  transition: transform 0.15s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+
+.stat-label {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: bold;
+  color: #1a1a1a;
+}
+
+
+/* savings */
+.savings-box {
+  background: #cfd9f7;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+
+.savings-box h4 {
+  background: #7a9bff;
+  color: white;
+  padding: 8px;
+  text-align: center;
+  font-size: 14px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 16px;
+  background: #d9534f;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #29c24a;
+  transition: width 0.5s;
+}
+
+.percent {
+  font-weight: bold;
+  font-size: 13px;
+}
+
+.savings-note {
+  font-size: 13px;
+  margin: 3px 0;
+}
+
+
+/* quick actions */
+.quick-box {
+  background: #cfd9f7;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+
+.quick-box h4 {
+  background: #7a9bff;
+  color: white;
+  padding: 8px;
+  text-align: center;
+  font-size: 14px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.quick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.quick-btn {
+  background: white;
+  border: 1px solid #bbb;
+  padding: 12px;
+  font-size: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.quick-btn:hover {
+  background: #f0f0f0;
+}
+
+
+/* activity */
+.activity-box {
+  background: #cfd9f7;
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.activity-box h4 {
+  background: #7a9bff;
+  color: white;
+  padding: 8px;
+  text-align: center;
+  font-size: 14px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.activity-item {
+  background: white;
+  padding: 10px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+}
+
+.activity-item p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.activity-icon {
+  margin-right: 6px;
+}
+
+.activity-time {
+  font-size: 11px;
+  color: #888;
+}
+
+
+/* TABLET */
+@media (min-width: 768px) {
+
+  .content {
+    padding: 24px;
+  }
+
+  .welcome-row h3 {
+    font-size: 22px;
+  }
+
+  .stat-card {
+    padding: 20px;
+  }
+
+  .stat-label {
+    font-size: 13px;
+  }
+
+  .stat-value {
+    font-size: 22px;
+  }
+
+  .quick-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .savings-box,
+  .quick-box,
+  .activity-box {
+    padding: 20px;
+  }
+}
+
+
+@media (min-width: 1024px) {
+
+  /* on desktop the sidebar stays open permanently */
+  .dashboard-page {
+    flex-direction: row;
+  }
+
+  .sidebar {
+    position: relative;
+    width: 240px;
+    height: auto;
+    min-height: 100vh;
+    box-shadow: none;
+    flex-shrink: 0;
+  }
+
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* hide the hamburger on desktop since sidebar is already visible */
+  .menu-btn {
+    display: none;
+  }
+
+  .content {
+    padding: 30px 40px;
+  }
+
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+  }
+
+  .stats-grid {
+    gap: 16px;
+  }
+
+  .stat-value {
+    font-size: 26px;
+  }
+}

@@ -1,0 +1,129 @@
+.members-page {
+  min-height: 100vh;
+  background: #e8eefc;
+  font-family: Arial, sans-serif;
+}
+
+.topbar {
+  background: #a9c0ff;
+  padding: 12px 16px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  border-bottom: 2px solid #7a9bff;
+}
+
+.topbar h2 { font-size: 18px; }
+
+.menu-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.content {
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.intro {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.btn-add {
+  background: #29c24a;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+
+.btn-add:hover { background: #22a63f; }
+
+.enroll-form {
+  background: white;
+  padding: 16px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.enroll-form h4 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.enroll-form label {
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.enroll-form input,
+.enroll-form select {
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.btn-submit {
+  background: #7a9bff;
+  color: white;
+  padding: 11px;
+  border: none;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.btn-submit:disabled { background: #b3c6ff; }
+
+.form-msg {
+  font-size: 13px;
+  text-align: center;
+  margin-top: 8px;
+  color: #1a6e2e;
+}
+
+.members-table-wrap {
+  background: white;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid #ccc;
+}
+
+.members-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.members-table th {
+  background: #7a9bff;
+  color: white;
+  padding: 10px 8px;
+  text-align: left;
+}
+
+.members-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.email-cell { font-size: 12px; }
+
+.check { color: #29c24a; }

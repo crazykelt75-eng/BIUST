@@ -1,0 +1,101 @@
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 20px;
+}
+
+.login-card {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 390px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.login-brand-icon { font-size: 22px; }
+.login-brand-text { font-size: 18px; font-weight: 700; color: var(--text); }
+
+.login-avatar {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+.avatar-circle {
+  width: 90px;
+  height: 90px;
+  background: var(--blue-light);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-emoji { font-size: 52px; line-height: 1; }
+
+.login-subtitle {
+  text-align: center;
+  color: var(--text-sub);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.login-form { display: flex; flex-direction: column; gap: 14px; }
+.field-group { display: flex; flex-direction: column; }
+
+.login-forgot-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.login-forgot { font-size: 12px; color: var(--blue); font-weight: 500; }
+
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+.login-remember input { accent-color: var(--blue); width: 16px; height: 16px; }
+
+.btn-social {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .2s;
+}
+.btn-social:hover { background: var(--blue-light); }
+
+.login-register-link {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-sub);
+  margin-top: 16px;
+}
+.link-blue { color: var(--blue); font-weight: 600; }
+
+.login-footer-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 24px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-sub);
+}

@@ -1,0 +1,208 @@
+.groups-page {
+  max-width: 420px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: #f5f5dc;
+  font-family: Arial, sans-serif;
+  position: relative;
+  padding-bottom: 40px;
+}
+
+.topbar {
+  background: #a9c0ff;
+  padding: 12px 16px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid #7a9bff;
+}
+
+.topbar h2 {
+  font-size: 18px;
+  color: #1a1a1a;
+}
+
+.menu-btn {
+  background: none;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.content {
+  padding: 14px;
+  background: #e8eefc;
+  min-height: 80vh;
+}
+
+.content.form-bg {
+  background: #fdf4d9;
+}
+
+.intro {
+  font-size: 14px;
+  margin-bottom: 14px;
+  color: #333;
+}
+
+
+/*main table view*/
+.btn-add {
+  width: 100%;
+  background: #29c24a;
+  color: white;
+  border: none;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+
+.btn-add:hover {
+  background: #22a63f;
+}
+
+.members-table-wrap {
+  background: white;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #999;
+}
+
+.members-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.members-table th {
+  background: #7a9bff;
+  color: white;
+  padding: 8px 4px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.members-table td {
+  padding: 8px 4px;
+  border: 1px solid #ccc;
+  vertical-align: top;
+  min-height: 30px;
+}
+
+.email-cell {
+  word-break: break-all;
+  font-size: 10px;
+}
+
+.check {
+  color: #29c24a;
+}
+
+.pending-dot {
+  color: #d4a017;
+}
+
+.actions-cell {
+  text-align: center;
+  font-weight: bold;
+  font-size: 16px;
+  color: #555;
+}
+
+
+/*add member form*/
+.add-form {
+  background: #fefdf7;
+  padding: 16px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ddd;
+}
+
+.form-title {
+  background: #7a9bff;
+  color: white;
+  padding: 8px;
+  text-align: center;
+  font-size: 14px;
+  border-radius: 4px;
+  margin: -16px -16px 14px -16px;
+}
+
+.add-form label {
+  font-size: 14px;
+  font-weight: bold;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.add-form input {
+  padding: 10px;
+  border: none;
+  border-radius: 4px;
+  background: white;
+  font-size: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.add-form input:focus {
+  outline: 2px solid #7a9bff;
+}
+
+.btn-add-member {
+  background: #a5d68f;
+  color: #1a1a1a;
+  border: none;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 16px;
+}
+
+.btn-add-member:hover {
+  background: #8cc273;
+}
+
+.btn-cancel {
+  background: transparent;
+  color: #666;
+  border: 1px solid #999;
+  padding: 8px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.btn-cancel:hover {
+  background: #f0f0f0;
+}
+
+.form-msg {
+  text-align: center;
+  font-size: 13px;
+  color: #c9185e;
+  margin-top: 10px;
+}
+
+
+.footer-icon {
+  position: absolute;
+  bottom: 10px;
+  left: 14px;
+  font-size: 20px;
+}
+
+
+@media (min-width: 700px) {
+  .groups-page {
+    max-width: 500px;
+  }
+}

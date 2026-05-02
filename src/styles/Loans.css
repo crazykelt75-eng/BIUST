@@ -1,0 +1,73 @@
+.loans-page { display: flex; flex-direction: column; gap: 18px; }
+
+.loans-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.loans-sub { font-size: 13px; color: var(--text-sub); }
+.btn-apply-loan {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+  white-space: nowrap;
+}
+.btn-apply-loan:hover { background: var(--blue-dark); }
+
+.loan-cards { display: flex; flex-direction: column; gap: 14px; }
+
+.loan-card {
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px;
+  background: var(--bg);
+}
+.loan-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.loan-purpose { font-size: 12px; color: var(--text-sub); margin-bottom: 3px; }
+.loan-amount  { font-size: 22px; font-weight: 800; color: var(--text); }
+.loan-balance { font-weight: 700; color: var(--red); }
+
+.loan-meta { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.loan-meta-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+.loan-meta-row span:last-child { color: var(--text); font-weight: 500; }
+
+.repay-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.repay-actions { display: flex; gap: 8px; }
+
+.btn-repay {
+  width: 100%;
+  padding: 10px;
+  background: var(--blue-light);
+  color: var(--blue);
+  border: 1.5px solid var(--blue-mid);
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+}
+.btn-repay:hover { background: var(--blue-mid); }
+
+@media (max-width: 600px) {
+  .loans-top { flex-direction: column; align-items: flex-start; }
+  .loan-amount { font-size: 18px; }
+  .repay-actions { flex-direction: column; }
+}
