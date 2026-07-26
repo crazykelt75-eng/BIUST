@@ -1,0 +1,55 @@
+# Deploys Kraal to Cloudflare Workers.
+#
+# Runs scripts/deploy.sh — the same one-command deploy a laptop would run —
+# on a GitHub runner, so no local tooling is needed. Triggered manually
+# (workflow_dispatch); it never fires on push, because a deploy that happens
+# as a side effect of committing is a deploy nobody decided to do.
+#
+# Requires these repository secrets (Settings → Secrets and variables →
+# Actions → New repository secret):
+#
+#   DATABASE_URL           runtime connection string (kraal_app via the pooler)
+#   DIRECT_URL             migrations connection string (postgres, ?schema=kraal)
+#   OTP_PEPPER             random secret, 16+ chars
+#   CLOUDFLARE_API_TOKEN   "Edit Cloudflare Workers" template token
+#   CLOUDFLARE_ACCOUNT_ID  optional — only needed if the token spans accounts
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure psql is present
+        run: command -v psql || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+
+      - name: Deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          OTP_PEPPER: ${{ secrets.OTP_PEPPER }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SEED_ADMIN_PHONE: "71000000"
+        run: ./scripts/deploy.sh
