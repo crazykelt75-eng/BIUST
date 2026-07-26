@@ -78,7 +78,22 @@ echo "✓ RLS forced on every kraal table; kraal_app policy refreshed"
 step "3/7 Seed (zones + optional test admin)"
 node prisma/seed.mjs
 
-step "4/7 Cloudflare secrets"
+step "4/7 Build (Next + OpenNext, budget enforced)"
+npm run cf:build
+BINARIES=$(find .open-next -name '*.node' | wc -l)
+[[ "$BINARIES" == "0" ]] || fail "Native binaries in the bundle — engineType=client regressed"
+
+step "5/7 Deploy"
+DEPLOY_OUT=$(npx wrangler deploy 2>&1) || { echo "$DEPLOY_OUT"; fail "wrangler deploy failed"; }
+echo "$DEPLOY_OUT" | tail -3
+URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
+
+step "6/7 Cloudflare secrets"
+# After the deploy, deliberately: `wrangler secret put` fails on a worker that
+# does not exist yet, so on a first run the worker must be created first. A
+# few seconds of a live worker without secrets is harmless — every request in
+# that window fails closed on the missing DATABASE_URL. Updated secrets take
+# effect immediately; no second deploy is needed.
 put() { printf '%s' "$2" | npx wrangler secret put "$1" > /dev/null && echo "  ✓ $1"; }
 put DATABASE_URL "$DATABASE_URL"
 put DIRECT_URL   "$DIRECT_URL"
@@ -101,16 +116,6 @@ else
   echo "  ⚠ TEST MODE: OTP codes will be written to the worker log."
   echo "    Read them with: npx wrangler tail kraal --format pretty"
 fi
-
-step "5/7 Build (Next + OpenNext, budget enforced)"
-npm run cf:build
-BINARIES=$(find .open-next -name '*.node' | wc -l)
-[[ "$BINARIES" == "0" ]] || fail "Native binaries in the bundle — engineType=client regressed"
-
-step "6/7 Deploy"
-DEPLOY_OUT=$(npx wrangler deploy 2>&1) || { echo "$DEPLOY_OUT"; fail "wrangler deploy failed"; }
-echo "$DEPLOY_OUT" | tail -3
-URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
 
 step "7/7 Smoke checks"
 [[ -n "$URL" ]] || { echo "⚠ Could not detect the URL; run the checks from DEPLOYMENT.md §7"; exit 0; }
