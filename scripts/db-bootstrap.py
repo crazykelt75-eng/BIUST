@@ -39,6 +39,12 @@ from urllib.parse import unquote, urlsplit
 
 API = "https://api.supabase.com/v1/projects/{ref}/database/query"
 
+# api.supabase.com sits behind Cloudflare, which rejects urllib's default
+# "Python-urllib/3.x" with a 403 and error code 1010 before the request ever
+# reaches Supabase. An API client is expected to say what it is; this names the
+# tool honestly so the rejection is not mistaken for an auth failure.
+USER_AGENT = "kraal-deploy/1.0 (+https://github.com/crazykelt75-eng/BIUST)"
+
 
 def parse(name):
     """Pull the role, password and project ref out of a connection string."""
@@ -77,6 +83,8 @@ def execute(ref, token, query, label):
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
         },
         method="POST",
     )
@@ -86,16 +94,26 @@ def execute(ref, token, query, label):
     except urllib.error.HTTPError as error:
         body = error.read().decode(errors="replace")[:500]
         # Never echo the query — it contains a password.
-        sys.exit(f"✗ {label} failed: HTTP {error.code}\n  {body}")
+        hint = ""
+        if error.code == 401:
+            hint = "\n  The access token was rejected. Check it has not been revoked."
+        elif error.code == 403 and "1010" in body:
+            hint = (
+                "\n  This is Cloudflare in front of the API rejecting the client, "
+                "not Supabase\n  rejecting the token — check the User-Agent header."
+            )
+        elif error.code == 404:
+            hint = f"\n  No project '{ref}' on this token's account."
+        sys.exit(f"✗ {label} failed: HTTP {error.code}\n  {body}{hint}")
     except urllib.error.URLError as error:
         sys.exit(f"✗ {label} failed: cannot reach the Supabase API — {error.reason}")
-    print(f"  ✓ {label}")
+    print(f"  ✓ {label}", flush=True)
 
 
 def main():
     token = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
     if not token:
-        print("Role bootstrap: skipped (no SUPABASE_ACCESS_TOKEN)")
+        print("Role bootstrap: skipped (no SUPABASE_ACCESS_TOKEN)", flush=True)
         return
 
     migration_role, migration_password, ref = parse("DIRECT_URL")
@@ -107,7 +125,7 @@ def main():
             f"{ref} and {runtime_ref}. Refusing to guess which one is right."
         )
 
-    print(f"Role bootstrap: project {ref}")
+    print(f"Role bootstrap: project {ref}", flush=True)
 
     wanted = {migration_role: migration_password, runtime_role: runtime_password}
     if len(wanted) != len({migration_role, runtime_role}):
