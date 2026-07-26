@@ -13,8 +13,9 @@ the source of truth; this README only covers the state of the code.
 
 ## Where the build has got to
 
-Phase 1. Domain core, persistence, and the listing → alert vertical are built
-and tested against a real database. No HTTP or UI layer yet.
+Phase 1. Domain core, persistence, the listing → alert vertical, and the
+seller-facing UI are built and tested. The app builds and runs; auth and photo
+storage are the remaining blockers to it being usable by a real farmer.
 
 | Area | State |
 |---|---|
@@ -37,7 +38,11 @@ and tested against a real database. No HTTP or UI layer yet.
 | Alert match worker | ✅ `src/services/match-worker.ts` |
 | Ledger persistence + idempotency | ✅ `src/db/ledger-repository.ts` |
 | Transaction orchestration | ✅ `src/services/transaction-service.ts` |
-| API routes, queue wiring, UI | ⬜ Not started |
+| Listing creation UI (offline, i18n) | ✅ `src/app/sell/` |
+| Browse page (SSR) | ✅ `src/app/page.tsx` |
+| Publish API route | ✅ `src/app/api/listings/` |
+| Bundle budget guard | ✅ `scripts/check-bundle-budget.mjs` |
+| Auth, photo storage, BullMQ queue | ⬜ Not started |
 
 137 unit tests + 31 integration tests, all passing.
 
@@ -45,6 +50,8 @@ and tested against a real database. No HTTP or UI layer yet.
 npm install
 npm test              # unit — no database needed
 npm run typecheck
+npm run build         # builds and enforces the JS budget
+npm run dev
 
 npm run test:integration   # needs a live PostgreSQL 16 + PostGIS
 npm run test:all
@@ -86,6 +93,13 @@ includes them.
 
 Integration tests truncate every table between cases, so point `DATABASE_URL`
 at a disposable database, never a shared one.
+
+## Not yet safe to deploy
+
+`POST /api/listings` trusts an `x-kraal-user` header because phone-OTP auth is
+not built. It is marked in the route and must not go anywhere public until
+that lands. Photo uploads are also unwired — the route generates placeholder
+URLs so the three-photo rule stays enforced rather than silently skipped.
 
 ## Before this takes real money
 
