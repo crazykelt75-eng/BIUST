@@ -270,15 +270,24 @@ named opt-in and log a warning on every use:
 - `ALLOW_LOCAL_STORAGE=true` — photos to local disk. Cannot work on Workers.
 
 **⚠️ Credentials exposed in the chat transcript.** During this session the user
-pasted a Cloudflare API token, and their database password (`kelvin@7620`, used
-for both `postgres` and `kraal_app`) was disclosed. **All of these must be
-rotated once testing finishes:**
+pasted a Cloudflare API token and a Supabase personal access token, and their
+database password (`kelvin@7620`, used for both `postgres` and `kraal_app`) was
+disclosed. **All of these must be rotated once testing finishes:**
 
 1. Cloudflare: roll the API token, update the GitHub secret.
-2. Supabase: change the `postgres` password (dashboard) and `kraal_app`
+2. Supabase: revoke the personal access token (Account → Access Tokens). It was
+   never usable — `api.supabase.com` is blocked by this environment's egress
+   policy — so revoking it costs nothing.
+3. Supabase: change the `postgres` password (dashboard) and `kraal_app`
    password (SQL editor), update both GitHub secrets.
 
-No application change is needed for either rotation.
+No application change is needed for any of these.
+
+**The session container cannot reach Supabase at all.** Outbound TCP to 5432 is
+blocked and `api.supabase.com` is denied by egress policy, so no amount of
+credentials lets this session touch the database directly. Database work must
+go through the Supabase MCP connector (enabled per-chat), the dashboard, or the
+GitHub Actions runner, which has unrestricted egress.
 
 ---
 
