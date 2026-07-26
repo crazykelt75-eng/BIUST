@@ -183,13 +183,40 @@ Rural Botswana: intermittent 2G/3G, expensive data, mid-range Android, shared de
 - Icon-led navigation. Numbers and photos over sentences. Voice notes permitted on listings.
 
 ### 3.7 Regulatory
+
 - **Data Protection Act (Botswana, 2018)** — consent, purpose limitation, data subject access,
   breach notification. Build a consent ledger, not a checkbox.
-- Escrow: holding client funds may require a payment-institution licence or, more practically,
-  a **partnership with a licensed PSP or bank that holds the trust account**. Do not custody
-  funds directly.
-- **OPEN:** Legal review needed on whether facilitating livestock auctions requires an
-  auctioneer's licence. Assume yes for the auction module; Phase-gate it accordingly.
+
+- **RESOLVED — Escrow: the platform holds the trust account directly.** Not a PSP passthrough.
+  This is a deliberate decision and it is defensible: it keeps the float, the settlement timing,
+  and the dispute-hold logic under platform control rather than a third party's. It also makes
+  the platform a custodian of other people's money, which changes what must be built.
+  Requirements are specified in **§7.4–7.5** and are **not optional** — they are the difference
+  between an escrow service and an unlicensed deposit-taking operation.
+
+- **RESOLVED — Auctions require an auctioneer's licence.** Confirmed. Implications:
+  - The timed-auction and any public ascending-price mechanic is **gated behind licence
+    acquisition**. It does not ship until the licence is in hand. Phase 3 at the earliest.
+  - **Design note worth checking with counsel before assuming the licence is needed at all
+    for the core product:** what typically triggers auctioneer licensing is *conducting a
+    public sale to the highest bidder*. The MVP's **best-offer** mechanic — private,
+    seller-initiated counter-offers, no public bid visibility, seller free to accept any offer
+    or none — is plausibly **not** an auction in the regulatory sense. The same may be true of
+    **sealed-bid tender**. If counsel confirms, the platform reaches full commercial function
+    without ever needing the licence, and auctions become an optional premium module rather
+    than a blocker.
+  - **DECISION:** Build best-offer and sealed-bid tender as the primary competitive mechanics.
+    Treat public auctions as an add-on. Do not let a licensing process sit on the critical path
+    to launch.
+  - **Alternative distribution path:** partner with an **already-licensed auctioneer** (§2.7)
+    who conducts auctions on the platform under their licence, taking a commission. Faster than
+    obtaining a licence, and it brings their existing seller book with them.
+
+- **OPEN:** Whether the trust account must be a segregated corporate account under a payment
+  institution designation, or an **attorney's trust account** under the Legal Practitioners Act
+  with a firm as stakeholder. The second option provides statutory ring-fencing and an
+  established audit regime largely for free, at the cost of a per-transaction legal fee and
+  slower release. Resolve before Phase 1 escrow goes live. See §14.
 
 ---
 
@@ -289,13 +316,29 @@ Support all five. The mechanism is chosen per listing and drives the UI and stat
 |---|---|---|
 | **Fixed price** | Buyer commits at asking price. First-come. | Small stock, produce, feed |
 | **Best offer** | Buyers submit offers; seller accepts/counters/declines. Structured counter-offers, full thread history. | Default for cattle |
-| **Timed auction** | Opens/closes at set times. Reserve price. **Anti-sniping: any bid in the final 2 min extends the close by 2 min.** Proxy bidding (max bid, auto-increment). | Stud stock, competitive lots |
-| **Sealed-bid tender** | Bids hidden until close; seller picks. | Large lots, institutional buyers |
+| **Timed auction** 🔒 | Opens/closes at set times. Reserve price. **Anti-sniping: any bid in the final 2 min extends the close by 2 min.** Proxy bidding (max bid, auto-increment). | Stud stock, competitive lots |
+| **Sealed-bid tender** | Bids hidden until close; seller picks freely — no obligation to take the highest. | Large lots, institutional buyers |
 | **Group buy / syndicate** | See §6. | Split lots, high-value shared assets |
 
-**DECISION:** Ship **fixed price + best offer** in the MVP. Auctions carry licensing questions
-(§3.7) and significant edge-case complexity (tie-breaking, retraction, reserve-not-met,
-proxy-bid disputes). Group buy ships in Phase 2 as the flagship differentiator.
+🔒 **Licence-gated.** Auctioneer licensing is confirmed as required (§3.7). Timed auctions do
+not ship until a licence is held, or until an already-licensed auctioneer partner conducts them
+on-platform under their licence.
+
+**DECISION:** Ship **fixed price + best offer** in the MVP; add **sealed-bid tender** in
+Phase 2. These three carry the commercial load without touching the licensing question. Build
+them so well that auctions become a nice-to-have rather than a dependency:
+
+- Best-offer with **structured counter-offers**, full thread history, and offer expiry gives a
+  farmer most of the price discovery an auction would, without the regulatory surface.
+- Sealed-bid tender covers the competitive-tension case for large lots. Keep the seller's
+  discretion explicit and unconstrained — *seller may accept any bid or none* — both because
+  it is commercially correct for livestock (a buyer's reliability matters as much as their
+  price) and because binding-to-highest-bidder is what makes a process look like an auction.
+
+**Design constraint on all non-auction mechanics:** do not display live competing bid amounts
+publicly, and do not auto-award to the highest bidder. Those two properties are what
+distinguish these mechanics from an auction. Have counsel confirm the boundary before launch,
+then hold the line on it in the UI.
 
 ---
 
@@ -446,6 +489,88 @@ At the loading ramp, both parties need certainty. The flow:
 **The whole handshake must work offline** and sync later. Loading ramps are not where signal is
 good.
 
+### 7.4 Escrow — platform-held trust account
+
+Per §3.7, the platform holds client funds directly. This is the highest-consequence subsystem
+in the product: **a bug here loses a farmer's cattle money, not a page view.** Build it with
+that weighting.
+
+**Account structure**
+
+```
+TRUST ACCOUNT (client funds — never platform money)
+  ├── buyer deposits awaiting settlement
+  ├── syndicate pledges held to funding deadline
+  ├── funds held pending dispute resolution
+  └── seller proceeds awaiting payout
+OPERATING ACCOUNT (platform money — fees, salaries, everything else)
+```
+
+**Non-negotiable rules, enforced in code and in banking:**
+
+1. **Segregation.** Client funds sit in a distinct bank account, never commingled with
+   operating funds. Not "a separate ledger in the same account" — a separate account.
+2. **The float is not revenue and is not spendable.** Money in the trust account belongs to
+   users until settlement releases it. It does not fund payroll, it is not invested, it is not
+   a working-capital line. Interest treatment must be defined in the T&Cs up front (either it
+   accrues to users, or the platform's entitlement is disclosed — pick one and write it down).
+3. **Fees are swept, not deducted in place.** On settlement, the fee moves trust → operating as
+   an explicit, logged transfer with its own ledger pair. Never net a fee off a balance
+   silently.
+4. **The ledger must reconcile to the bank, daily and automatically.**
+   `SUM(trust ledger balances) == bank statement balance`, every day, no exceptions. Any
+   variance raises a **P1 alert** and freezes payouts until cleared. This job is as important
+   as anything user-facing.
+5. **Dual authorisation on payouts** above a configurable threshold (start at BWP 20,000). Two
+   distinct admin accounts, logged. Single-admin release above threshold must be impossible,
+   not merely discouraged.
+6. **Ring-fencing in the T&Cs.** Terms must state explicitly that the platform holds funds as
+   **stakeholder, not as principal**, that client funds are not platform assets, and that they
+   are not available to platform creditors. Have counsel draft this — it is the clause that
+   protects users if the company fails, and the clause a regulator will read first.
+7. **Fidelity cover / professional indemnity insurance** sized to the peak float. Budget it as
+   a fixed cost of doing business, not an optional extra.
+8. **Independent annual audit** of the trust account. Publish that it happens; it is a
+   marketing asset as much as a compliance one.
+
+**Payment rails in.** Orange Money, MyZaka, bank EFT. Each has a different settlement lag —
+mobile money is near-instant, EFT is not. **Model deposits as `PENDING` until bank-confirmed,
+never on payment-initiation.** A transaction must not advance to `ESCROW_FUNDED` on an
+optimistic assumption; that is the exact hole a fraudster walks through.
+
+**Payout runs.** Batch seller payouts on a fixed schedule (e.g. twice daily) rather than
+per-transaction, to reduce transfer fees and give a reconciliation checkpoint. Publish the
+schedule so sellers know when to expect money — *"paid out within 4 hours of collection"* is a
+selling point.
+
+### 7.5 Escrow state and the money it maps to
+
+Every escrow movement is a **paired ledger entry** (§10.3). No exceptions, no shortcuts.
+
+| Event | Ledger movement |
+|---|---|
+| Buyer deposits | `DR bank:trust` / `CR user:buyer:escrow_held` |
+| Escrow confirmed funded | `DR user:buyer:escrow_held` / `CR txn:{id}:held` |
+| Settlement — seller portion | `DR txn:{id}:held` / `CR user:seller:payable` |
+| Settlement — platform fee | `DR txn:{id}:held` / `CR platform:fee_receivable` |
+| Fee sweep to operating | `DR platform:fee_receivable` / `CR bank:operating` (+ matching trust debit) |
+| Seller payout executed | `DR user:seller:payable` / `CR bank:trust` |
+| Refund (cancelled) | `DR txn:{id}:held` / `CR user:buyer:refundable` → payout |
+| Partial refund (weight adj.) | Split settlement per §3.4 — two paired entries, both logged |
+| Dispute hold | `DR txn:{id}:held` / `CR txn:{id}:disputed` — funds frozen, neither party paid |
+| Syndicate pledge funded | `DR bank:trust` / `CR syndicate:{id}:member:{uid}` |
+| Syndicate lapses | Reverse every member entry individually, refund each |
+| Default deposit forfeited | `DR syndicate:{id}:member:{uid}` / `CR user:seller:payable` |
+
+**Operational load — budget for it.** Holding funds is not only an engineering task. It needs a
+named person doing daily reconciliation, a dispute officer with authority to release held
+funds, a documented payout approval process, and a written procedure for what happens when the
+bank and the ledger disagree. **Staff this before the first pula lands, not after.**
+
+**Insolvency plan.** Write down, before launch, what happens to in-flight escrow if the
+platform ceases operating: who releases the funds, on what authority, and to whom. A regulator
+will ask. So will the first serious investor.
+
 ---
 
 ## 8. Trust, verification, and reputation
@@ -587,7 +712,8 @@ where money or animals are moving.
 | Files | **S3-compatible + CDN**, on-the-fly image resize | Photos are the bulk of the payload |
 | Auth | **Phone-first OTP** (Auth.js) | Email is not the primary identity here |
 | SMS/USSD/WhatsApp | **Africa's Talking** (regional coverage, USSD support) with Twilio fallback | |
-| Payments | **Orange Money + MyZaka/Mascom + bank EFT**, via a licensed PSP for the trust account | Mobile money is how the market actually pays |
+| Payments | **Orange Money + MyZaka/Mascom + bank EFT**, collecting into a **platform-held trust account** (§7.4) | Mobile money is how the market actually pays. Aggregators reduce integration count but **must not** hold the float — collection only, settling into the trust account |
+| Ledger | **Postgres, in the primary DB, double-entry** — not a separate service | Money and transaction state must commit in the same DB transaction. Splitting them across services creates reconciliation gaps that are extremely painful to close later |
 | Notifications | Custom orchestrator over Redis + FCM Web Push | Business logic is too domain-specific to outsource |
 | Hosting | **Vercel** (web) + **managed Postgres** + **Railway/Fly** (workers) | Region: choose the lowest-latency to Southern Africa; measure, don't assume |
 | Observability | **Sentry + PostHog + structured logs** | PostHog for funnels; you will need them |
@@ -678,7 +804,7 @@ it. Charge where value is realised.
 | Stream | Model | Notes |
 |---|---|---|
 | **Success fee** | 1.5–3% of settled value, seller-side | Primary. Only charged on completion. Tapers with tier: T3 pays less. |
-| **Escrow fee** | Flat BWP 50–150, or bundled into the success fee | Covers PSP cost |
+| **Escrow fee** | Flat BWP 50–150, or bundled into the success fee | Now covers real internal cost: collection fees, reconciliation staff, fidelity cover, audit. Since the platform holds the account (§7.4), this is a genuine cost centre — price it deliberately rather than treating it as a passthrough |
 | **Butcher/feedlot subscription** | Monthly — WTBs, forward contracts, bulk tools, API, priority alerts | Highest willingness to pay |
 | **Featured listings** | Boosted ranking, badge | Self-serve, low friction |
 | **Transport commission** | 5–10% of the freight job | |
@@ -700,8 +826,14 @@ to take a percentage of.
 - Search + filter + map, PostGIS radius
 - **Alert profiles + push/SMS notifications** — do not defer this; it is the product
 - Best-offer and fixed-price flows, in-app messaging
-- Manual escrow (platform-operated bank account, admin-triggered release) — **do not build
-  automated escrow before you know people will transact**
+- **Escrow: manually released, but fully ledgered from day one.** The release decision is a
+  human clicking a button in admin; the *accounting* is not manual. Every movement writes
+  paired ledger entries (§7.5), and daily bank reconciliation runs from the first deposit.
+  Automating release can wait until volume justifies it — **correct books cannot.** Retrofitting
+  a double-entry ledger onto months of ad-hoc transfers is a project nobody survives cheerfully.
+- Trust account operational readiness: segregated account open, dual-authorisation payouts,
+  reconciliation job + P1 alerting, T&Cs with the stakeholder/ring-fencing clause, fidelity
+  cover bound, named person responsible for daily reconciliation
 - Two-sided ratings
 - Setswana + English
 - PWA, offline browse and draft listings
@@ -710,7 +842,9 @@ to take a percentage of.
 ### Phase 2 — The differentiator (8–10 weeks). *Goal: prove the buy-in mechanic works.*
 - **Lot splitting**
 - **Syndicate purchases**, both ownership models, generated co-ownership agreements
-- Automated escrow via PSP integration
+- Automated escrow release (rules-driven, on the collection handshake) with manual override
+  retained for disputes and anything above the dual-authorisation threshold
+- **Sealed-bid tender** — competitive tension without the auctioneer licence
 - Want-to-Buy listings + reverse matching
 - Movement-permit workflow, zone restriction enforcement
 - Weight-tolerance auto-adjustment, collection handshake
@@ -718,7 +852,10 @@ to take a percentage of.
 - Price index v1
 
 ### Phase 3 — Depth (10–12 weeks)
-- Timed auctions (pending licensing review)
+- **Timed auctions — hard-gated on the auctioneer's licence being in hand**, or on a licensed
+  auctioneer partner going live. Start the licence application in parallel with Phase 1 so it
+  is not the thing holding Phase 3; it is paperwork with a lead time, not engineering, and it
+  can run in the background at near-zero cost to the build.
 - Forward supply contracts for butchers
 - USSD companion
 - WhatsApp integration
@@ -762,10 +899,17 @@ context.*
 >    score and outcome.
 > 6. **Offers & transactions** — best-offer threads with structured counter-offers; the state
 >    machine in §7.2 with every timeout implemented as a scheduled job.
-> 7. **Ratings & disputes** — blind two-sided ratings, automatic weight-accuracy score.
-> 8. **Admin** — verification queue, listing review, dispute inbox, zone-restriction toggle,
->    fraud-flag review.
-> 9. **i18n** — Setswana and English, complete. No hardcoded strings anywhere.
+> 7. **Escrow & ledger (§7.4–7.5)** — the platform holds the trust account, so this is core,
+>    not an integration. Build: double-entry ledger with paired entries for every movement;
+>    deposits `PENDING` until bank-confirmed; admin-triggered release with dual authorisation
+>    above BWP 20,000; daily reconciliation job asserting ledger total == bank balance, with a
+>    P1 alert and automatic payout freeze on any variance; batched payout runs. **Money and
+>    transaction state must commit in the same DB transaction.**
+> 8. **Ratings & disputes** — blind two-sided ratings, automatic weight-accuracy score,
+>    dispute state freezes the associated escrow funds.
+> 9. **Admin** — verification queue, listing review, dispute inbox, zone-restriction toggle,
+>    fraud-flag review, escrow release console with a full audit trail on every release.
+> 10. **i18n** — Setswana and English, complete. No hardcoded strings anywhere.
 >
 > **Hard constraints:**
 > - Every user-facing string is translatable. Setswana is a launch language, not a Phase-4 task.
@@ -773,10 +917,18 @@ context.*
 > - Listing creation and browse must work offline.
 > - Zone restrictions are hard blocks on the transaction state machine, never warnings.
 > - No transaction state may sit indefinitely — every state has a timeout with an auto-action.
-> - All money movement goes through the double-entry ledger. Never mutate a balance column.
+> - **All money movement goes through the double-entry ledger. Never mutate a balance column.
+>   Never net a fee off a balance silently. Client funds and platform funds are separate
+>   accounts, and the code must make commingling structurally impossible, not merely unlikely.**
+> - **No public display of competing bid amounts, and no automatic award to the highest
+>   bidder** — these properties are what keep the MVP's mechanics outside auctioneer licensing
+>   (§3.7/§5). Do not add them without legal sign-off.
+> - Escrow tests are not optional: cover partial refunds, weight-adjusted settlement,
+>   double-submission of a release, and reconciliation drift. Property-test that the ledger
+>   sums to zero after any sequence of operations.
 >
-> **Explicitly out of scope for Phase 1:** auctions, syndicates, lot splitting, USSD,
-> automated escrow, categories other than cattle.
+> **Explicitly out of scope for Phase 1:** auctions (licence-gated), syndicates, lot splitting,
+> sealed-bid tender, USSD, automated escrow release, categories other than cattle.
 >
 > Start by proposing the Prisma schema for review before writing application code.
 
@@ -784,18 +936,44 @@ context.*
 
 ## 14. Open questions to resolve before building
 
-1. **LITS API access** — is programmatic verification obtainable from DVS, and on what terms?
+**Resolved:**
+- ~~Escrow: PSP or self-held?~~ → **Platform holds the trust account.** See §3.7, §7.4–7.5.
+- ~~Do auctions need a licence?~~ → **Yes.** Auctions are licence-gated to Phase 3; the MVP
+  routes around the requirement via best-offer and sealed-bid tender. See §3.7, §5.
+
+**Still open — the escrow decision opened three follow-ons, and they are now the highest
+priority items on this list:**
+
+1. **Trust account structure** *(blocks Phase 1 escrow going live)* — segregated corporate
+   account under a payment-institution designation, or an **attorney's trust account** under
+   the Legal Practitioners Act? The attorney route gives statutory ring-fencing and an
+   established audit regime, at the cost of per-transaction legal fees and slower release. The
+   corporate route is cheaper and faster but the ring-fencing must be constructed contractually
+   and is weaker in an insolvency. **Get a written opinion — the answer determines both the
+   banking setup and the release latency users experience.**
+2. **Payment-institution licensing** *(blocks Phase 1 escrow going live)* — does holding
+   client funds for livestock settlement require designation or authorisation under the
+   **National Payment System Act**, and does NBFIRA have any interest? Confirm in writing
+   before the first deposit, not after. If authorisation is required, the lead time goes on
+   the critical path and Phase 1 may need to launch with introductions-only and no escrow.
+3. **Interest on the float** — who is entitled to it, and what must the T&Cs disclose? Decide
+   before writing terms; it is very hard to change afterwards.
+4. **Auctioneer licence vs. partner** — apply directly (start now, runs in the background), or
+   partner with a licensed auctioneer who brings their seller book? Not urgent, but starting
+   the application early costs almost nothing and removes it from the Phase 3 critical path.
+5. **Confirm the licensing boundary** — get counsel to confirm in writing that best-offer and
+   sealed-bid tender, *as specified in §5*, do not constitute auctions. This single opinion
+   determines whether the licence is a launch blocker or an optional upgrade. Ask it early;
+   it is the cheapest high-leverage question on this list.
+6. **LITS API access** — is programmatic verification obtainable from DVS, and on what terms?
    Determines whether §3.1 is a real control or a self-declared one.
-2. **Escrow licensing** — which PSP or bank will hold the trust account, and what does the
-   regulator require of the platform in that arrangement?
-3. **Auctioneer licensing** — does running timed auctions require a licence? Gates Phase 3.
-4. **Pilot region** — a single district with real cattle density and reasonable connectivity.
+7. **Pilot region** — a single district with real cattle density and reasonable connectivity.
    Central District (Serowe/Palapye) is the obvious candidate. Liquidity is local before it is
    national; launching countrywide with thin coverage everywhere is the classic marketplace
    death.
-5. **Cold-start supply** — which 50 farmers list first, and who recruits them? Extension
+8. **Cold-start supply** — which 50 farmers list first, and who recruits them? Extension
    officers and farmers' associations are the realistic channel, not digital advertising.
-6. **Butcher anchor** — signing 3–5 butchers to standing WTBs *before* launch gives the first
+9. **Butcher anchor** — signing 3–5 butchers to standing WTBs *before* launch gives the first
    farmers a reason to list. Demand-side anchoring beats supply-side incentives.
 
 ---
