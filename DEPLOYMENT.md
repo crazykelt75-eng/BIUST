@@ -107,7 +107,7 @@ RESET ROLE;
    | Variable | Port | Used for | Why |
    |---|---|---|---|
    | `DATABASE_URL` | 6543 | runtime | Transaction pooler. Serverless invocations are numerous and short-lived; direct connections exhaust Postgres's limit fast. |
-   | `DIRECT_URL` | 5432 | migrations only | The pooler cannot run DDL — no prepared statements, no advisory locks. |
+   | `DIRECT_URL` | 5432 **session pooler** | migrations only | The *transaction* pooler (6543) cannot run DDL. The *direct* host (`db.<ref>.supabase.co`) is IPv6-only and unreachable from GitHub Actions — use `…pooler.supabase.com:5432`, username `postgres.<ref>`. |
 
    Append `?pgbouncer=true&connection_limit=1` to `DATABASE_URL`.
 

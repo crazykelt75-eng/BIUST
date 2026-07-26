@@ -52,6 +52,28 @@ npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: np
 # it for psql; Prisma keeps the full URL.
 PSQL_URL="$(printf '%s' "$DIRECT_URL" | sed -e 's/?schema=kraal&/?/' -e 's/[?&]schema=kraal//')"
 
+# Preflight: Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6
+# ONLY, and most CI runners — GitHub Actions included — have no IPv6 route.
+# Diagnose it here rather than leaving a bare "Network is unreachable".
+if ! psql "$PSQL_URL" -qc 'SELECT 1' > /dev/null 2>&1; then
+  if [[ "$PSQL_URL" == *db.*.supabase.co* ]]; then
+    fail "Cannot reach the database.
+
+  DIRECT_URL points at db.<ref>.supabase.co, which Supabase serves over IPv6
+  only. GitHub Actions runners have no IPv6 route, so this can never connect
+  from CI.
+
+  Use the SESSION POOLER instead — same capabilities (DDL, prepared
+  statements), but reachable over IPv4:
+
+    postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?schema=kraal
+
+  Copy the exact host from: Supabase dashboard → Connect → Session pooler.
+  Note the username is tenant-qualified: postgres.<ref>, not plain postgres."
+  fi
+  fail "Cannot reach the database with DIRECT_URL. Check the host, password (URL-encode @ : / # ?), and that the project is not paused."
+fi
+
 step "1/7 PostGIS + migrations (direct connection)"
 psql "$PSQL_URL" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
 npx prisma migrate deploy
