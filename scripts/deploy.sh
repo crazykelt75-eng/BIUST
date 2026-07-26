@@ -96,15 +96,19 @@ PSQL_RUNTIME="$(psql_url "$DATABASE_URL")"
 # Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6 ONLY, and most
 # CI runners — GitHub Actions included — have no IPv6 route. Diagnose it here
 # rather than leaving a bare "Network is unreachable".
+PREFLIGHT_PROBLEMS=0
+problem() { echo "✗ $1" >&2; PREFLIGHT_PROBLEMS=$((PREFLIGHT_PROBLEMS + 1)); }
+
 preflight() {
-  local name="$1" url="$2" err
-  err="$(psql "$url" -qc 'SELECT 1' 2>&1 >/dev/null)" && return 0
+  local name="$1" url="$2" role err
+  err="$(psql "$url" -qc 'SELECT 1' 2>&1 >/dev/null)" && { echo "✓ $name connects"; return 0; }
 
   # Surface what psql actually said — an earlier version swallowed it and left
   # "cannot reach the database" with no cause, which is nearly useless.
   echo "psql said: $err" >&2
+
   if [[ "$url" == *db.*.supabase.co* ]]; then
-    fail "Cannot reach the database with $name.
+    problem "Cannot reach the database with $name.
 
   It points at db.<ref>.supabase.co, which Supabase serves over IPv6 only.
   GitHub Actions runners have no IPv6 route, so this can never connect from CI.
@@ -115,31 +119,52 @@ preflight() {
     postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?schema=kraal
 
   Copy the exact host from: Supabase dashboard → Connect."
+    return 1
   fi
+
+  role="${url#*://}"; role="${role%%:*}"; role="${role%%.*}"
   case "$err" in
     *"Tenant or user not found"*|*"password authentication failed"*)
-      fail "The database rejected $name's credentials.
+      # The pooler reports the BARE role name even for a tenant-qualified
+      # login, so this error reads identically whether the project-ref suffix
+      # is missing or the password is wrong. The suffix is checked before we
+      # get here, so this is the password — and which password that is depends
+      # on the role, which is the part people get wrong:
+      local hint
+      if [[ "$role" == postgres ]]; then
+        hint="  'postgres' authenticates with the PROJECT DATABASE PASSWORD, set in
+  Supabase dashboard → Settings → Database. Setting some other role's password
+  does not change it. Reset it there if you do not know it, or set it directly
+  in the SQL editor:  ALTER ROLE postgres WITH PASSWORD '...';"
+      else
+        hint="  '$role' is created without a usable password. Set one, once, in the
+  Supabase SQL editor:  ALTER ROLE $role PASSWORD '...';"
+      fi
+      problem "The database rejected $name's password (role: $role).
 
-  The username is tenant-qualified (postgres.<ref>) and looks right, so check
-  the PASSWORD — in a URL it must be percent-encoded: @ becomes %40, # becomes
-  %23, / becomes %2F. An unencoded @ silently truncates the host.
+$hint
 
-  And confirm the role's password is actually set. kraal_app is created
-  unusable; it needs, once, in the Supabase SQL editor:
-    ALTER ROLE kraal_app PASSWORD '...';" ;;
+  Then percent-encode it in the URL: @ → %40, # → %23, / → %2F, : → %3A.
+  An unencoded @ silently truncates the host and gives this same error."
+      return 1 ;;
     *"could not translate host name"*|*"Name or service not known"*)
-      fail "$name's hostname does not resolve. The region prefix is often
+      problem "$name's hostname does not resolve. The region prefix is often
   aws-0- or aws-1- and varies by project — copy the exact host from:
-  Supabase dashboard → Connect." ;;
+  Supabase dashboard → Connect."
+      return 1 ;;
     *)
-      fail "Cannot reach the database with $name (see psql error above).
-  Check the host, the password encoding, and that the project is not paused." ;;
+      problem "Cannot reach the database with $name (see psql error above).
+  Check the host, the password encoding, and that the project is not paused."
+      return 1 ;;
   esac
 }
 
-preflight DIRECT_URL   "$PSQL_DIRECT"
-preflight DATABASE_URL "$PSQL_RUNTIME"
-echo "✓ both connection strings reach the database"
+# Test both even when the first fails. Stopping at the first broken credential
+# hides the second one until the next run, and each run costs a round trip
+# through someone editing a secret in a browser.
+preflight DIRECT_URL   "$PSQL_DIRECT" || true
+preflight DATABASE_URL "$PSQL_RUNTIME" || true
+[[ "$PREFLIGHT_PROBLEMS" == "0" ]] || fail "$PREFLIGHT_PROBLEMS connection string(s) unusable — see above. Nothing was changed."
 
 step "1/7 PostGIS + migrations (direct connection)"
 psql "$PSQL_DIRECT" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
