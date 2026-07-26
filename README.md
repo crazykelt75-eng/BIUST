@@ -42,9 +42,12 @@ storage are the remaining blockers to it being usable by a real farmer.
 | Browse page (SSR) | ✅ `src/app/page.tsx` |
 | Publish API route | ✅ `src/app/api/listings/` |
 | Bundle budget guard | ✅ `scripts/check-bundle-budget.mjs` |
-| Auth, photo storage, BullMQ queue | ⬜ Not started |
+| Phone-OTP auth + sessions | ✅ `src/services/auth-service.ts` |
+| Server-side capability gates | ✅ `src/lib/session.ts` |
+| Sign-in / verify pages | ✅ `src/app/signin/`, `src/app/verify/` |
+| Photo storage, BullMQ queue | ⬜ Not started |
 
-137 unit tests + 31 integration tests, all passing.
+155 unit tests + 52 integration tests, all passing.
 
 ```bash
 npm install
@@ -94,12 +97,26 @@ includes them.
 Integration tests truncate every table between cases, so point `DATABASE_URL`
 at a disposable database, never a shared one.
 
+## Configuration
+
+`OTP_PEPPER` is **required in production** and must be at least 16 characters;
+the app refuses to issue codes without it. Without a pepper, a leaked database
+yields a rainbow table of one million entries, which is no protection at all
+for a 6-digit code. See `.env.example`.
+
+```bash
+openssl rand -base64 32
+```
+
 ## Not yet safe to deploy
 
-`POST /api/listings` trusts an `x-kraal-user` header because phone-OTP auth is
-not built. It is marked in the route and must not go anywhere public until
-that lands. Photo uploads are also unwired — the route generates placeholder
-URLs so the three-photo rule stays enforced rather than silently skipped.
+Photo uploads are unwired — the publish route generates placeholder URLs so the
+three-photo rule stays enforced rather than silently skipped. Real object
+storage is the remaining gap before a farmer can actually list an animal.
+
+SMS currently goes to the server log via `consoleSmsSender`. Wire a real
+gateway (Africa's Talking) before any public deployment, or codes will be
+visible in logs and invisible to users.
 
 ## Before this takes real money
 
@@ -128,7 +145,10 @@ src/domain/
   transaction/            Transaction state machine and timeouts
   zones/                  Movement feasibility between disease-control zones
   matching/               Alert scoring and delivery decisions
+  auth/                   OTP policy: rate limits, attempt caps, phone format
 src/db/                   Prisma client, ledger persistence
 src/services/             Listing publication, transactions, match fan-out
 src/i18n/                 Setswana and English catalogue
+src/app/                  Next.js routes, pages, and API handlers
+src/lib/                  Session cookies, capability guards, offline drafts
 ```

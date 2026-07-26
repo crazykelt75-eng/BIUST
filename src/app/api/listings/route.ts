@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { prisma } from '../../../db/client';
+import { requireCapability, toErrorResponse } from '../../../lib/session';
 import { ListingError, publishListing } from '../../../services/listing-service';
 import { fanOutListing } from '../../../services/match-worker';
 
@@ -12,11 +13,16 @@ import { fanOutListing } from '../../../services/match-worker';
  * connection that is already marginal.
  */
 export async function POST(request: Request) {
-  // TODO(auth): replace with the session user once phone-OTP auth lands.
-  // Until then this route is unauthenticated and MUST NOT be deployed.
-  const sellerId = request.headers.get('x-kraal-user');
-  if (!sellerId) {
-    return NextResponse.json({ message: 'Not signed in' }, { status: 401 });
+  // Session-derived, never client-supplied. The tier gate runs server-side
+  // against the user's live tier — a client that claims T2 gets a 403.
+  let sellerId: string;
+  try {
+    const user = await requireCapability('CREATE_LISTING');
+    sellerId = user.userId;
+  } catch (error) {
+    const response = toErrorResponse(error);
+    if (response) return response;
+    throw error;
   }
 
   let payload: unknown;

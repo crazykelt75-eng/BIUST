@@ -104,6 +104,7 @@ model User {
   stolenReports  StolenStockReport[]
   fraudFlags     FraudFlag[]
   payouts        Payout[]
+  sessions       Session[]
 
   @@index([tier])
   @@map("users")
@@ -1035,4 +1036,49 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorId, occurredAt])
   @@map("audit_log")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication (MASTER_PROMPT §10.1 — phone-first OTP)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Email is not the primary identity here. Most users have a phone and no email,
+// and many share a device, so sessions are short-lived by default and the
+// verification tier — not the session — is what gates anything consequential.
+
+/// A one-time code sent by SMS. The code itself is never stored, only its hash.
+model OtpChallenge {
+  id          String   @id @default(cuid())
+  /// E.164.
+  phone       String
+  codeHash    String
+  /// Attempts consumed. The challenge dies at MAX_VERIFY_ATTEMPTS.
+  attempts    Int      @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  /// Coarse client fingerprint for abuse investigation, not for identity.
+  requestedIp String?
+  createdAt   DateTime @default(now())
+
+  @@index([phone, createdAt])
+  @@index([expiresAt])
+  @@map("otp_challenges")
+}
+
+/// A logged-in session. The bearer token is never stored, only its hash.
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
 }
