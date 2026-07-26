@@ -195,6 +195,27 @@ left unprotected, seeds zones, pushes secrets, builds, deploys, and smoke-tests
 the URL. Everything below documents what it does, for when a step needs to be
 run by hand.
 
+## 4e. Role bootstrap — optional, and best removed once it has done its job
+
+`scripts/db-bootstrap.py` runs first in the deploy workflow. Given
+`SUPABASE_ACCESS_TOKEN` it reads the role, password and project ref out of
+`DATABASE_URL` and `DIRECT_URL` and alters the database to match, through
+Supabase's Management API. Without the token it prints one line and exits.
+
+It exists because credentials that disagree with the database cannot be
+repaired by anything that has to connect to the database first, and because
+`postgres` authenticates with the *project database password* from the
+dashboard — which setting another role's password does not change. That
+asymmetry cost several deploys.
+
+It also pins `search_path = kraal, extensions` on the runtime role, which is
+the one misconfiguration here that fails silently rather than loudly.
+
+**Delete the secret once the credentials are settled.** A Supabase personal
+access token controls every project on the account, which is far more than a
+deploy needs; leaving it in CI trades a permanent broad privilege for a problem
+that only occurs during bootstrap.
+
 ## 5. Cloudflare secrets
 
 Never put these in `wrangler.jsonc` — it is committed.
