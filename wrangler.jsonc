@@ -18,6 +18,23 @@
     "enabled": true
   },
 
+  // Fan-out runs off the request path. BullMQ is not an option here — it needs
+  // a persistent Redis connection, which Workers cannot hold.
+  "queues": {
+    "producers": [{ "queue": "kraal-jobs", "binding": "QUEUE" }],
+    "consumers": [
+      {
+        "queue": "kraal-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        // Consumers are idempotent (fanOutListing upserts on a unique key), so
+        // at-least-once redelivery is safe.
+        "max_retries": 3,
+        "dead_letter_queue": "kraal-jobs-dlq"
+      }
+    ]
+  },
+
   // Secrets are NOT set here. Use `wrangler secret put NAME` so they never
   // enter the repository:
   //   DATABASE_URL   Supabase transaction pooler, port 6543

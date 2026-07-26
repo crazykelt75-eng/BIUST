@@ -48,9 +48,12 @@ storage are the remaining blockers to it being usable by a real farmer.
 | Photo upload, EXIF handling, storage | ✅ `src/services/photo-service.ts` |
 | Supabase + Cloudflare deploy config | ✅ `DEPLOYMENT.md`, `wrangler.jsonc` |
 | Deny-all RLS for Supabase | ✅ `prisma/sql/rls_deny_all.sql` |
-| Queue (Cloudflare Queues), SMS gateway | ⬜ Not started |
+| SMS gateway (Africa's Talking) | ✅ `src/services/sms/` |
+| SMS delivery log | ✅ `SmsDelivery` |
+| Cloudflare Queues fan-out | ✅ `src/services/queue.ts`, `src/workers/` |
+| Photo resizing, USSD, syndicates | ⬜ Not started |
 
-175 unit tests + 52 integration tests, all passing.
+191 unit tests + 55 integration tests, all passing.
 
 ```bash
 npm install
@@ -137,13 +140,9 @@ anyone enumerate every other listing's photos.
 
 ## Not yet safe to deploy
 
-SMS currently goes to the server log via `consoleSmsSender`. Wire a real
-gateway (Africa's Talking) before any public deployment, or codes will be
-visible in logs and invisible to users.
-
-Alert fan-out still runs inline in the publish request. It is fine at low
-volume but belongs on a queue before launch — a farmer on 2G should not wait
-for a sweep across every alert profile.
+Photo serving goes straight to the R2 public URL, so every listing card
+downloads a full-size image. Put Cloudflare Images or a resizing Worker in
+front before launch — this is a metered-data cost borne by the user.
 
 ## Before this takes real money
 

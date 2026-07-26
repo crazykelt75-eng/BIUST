@@ -1092,3 +1092,52 @@ model Session {
   @@index([expiresAt])
   @@map("sessions")
 }
+
+/// SMS delivery attempts.
+///
+/// Every send is recorded, successful or not. Two reasons this is not
+/// optional: support will field "I never got my code" constantly and there is
+/// no way to answer it without a log, and SMS is a metered cost that needs to
+/// be attributable when the bill arrives.
+///
+/// The message body is NEVER stored — it contains the one-time code.
+model SmsDelivery {
+  id          String   @id @default(cuid())
+  /// E.164, stored in full: a delivery log that masks the number cannot be
+  /// used to investigate a delivery failure for a specific user.
+  phone       String
+  kind        SmsKind
+  status      SmsStatus @default(QUEUED)
+  provider    String
+  /// Provider's message id, for reconciliation against their delivery reports.
+  providerRef String?
+  /// Cost as reported by the provider, e.g. "BWP 0.8000".
+  cost        String?
+  attempts    Int      @default(0)
+  failureCode String?
+  failureText String?
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([phone, createdAt])
+  @@index([status])
+  @@map("sms_deliveries")
+}
+
+enum SmsKind {
+  OTP
+  OFFER_RECEIVED
+  ESCROW_FUNDED
+  COLLECTION_CODE
+  ALERT_MATCH
+  SYNDICATE_DEADLINE
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  /// Provider rejected it permanently — retrying cannot help.
+  REJECTED
+}

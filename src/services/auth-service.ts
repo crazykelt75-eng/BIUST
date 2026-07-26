@@ -27,6 +27,7 @@ import {
   normalisePhone,
   sessionExpiryFrom,
 } from '../domain/auth/otp';
+import { SmsError, resolveSender } from './sms/africas-talking';
 
 export class AuthError extends Error {
   constructor(
@@ -43,7 +44,12 @@ export interface SmsSender {
   send(args: { to: string; message: string }): Promise<void>;
 }
 
-/** Development sender. Logs the masked number and the code to the server only. */
+/**
+ * Development sender. Logs the masked number and the code to the server only.
+ *
+ * Kept here for tests; production selection goes through
+ * `resolveSender()` in ./sms/africas-talking, which refuses this fallback.
+ */
 export const consoleSmsSender: SmsSender = {
   async send({ to, message }) {
     console.info(`[sms] ${maskPhone(to)}: ${message}`);
@@ -159,11 +165,47 @@ export async function requestCode(
     select: { id: true },
   });
 
-  const sender = args.sender ?? consoleSmsSender;
-  await sender.send({
-    to: phone,
-    message: `Kraal: ${code}. E fela mo metsotsong e 5. / Expires in 5 minutes.`,
+  const sender = args.sender ?? resolveSender();
+  const delivery = await db.smsDelivery.create({
+    data: { phone, kind: 'OTP', provider: sender.constructor?.name ?? 'unknown' },
+    select: { id: true },
   });
+
+  try {
+    // Setswana first — it is the default language, and the first line is what
+    // shows in a lock-screen notification.
+    await sender.send({
+      to: phone,
+      message: `Kraal: ${code}. E fela mo metsotsong e 5. / Expires in 5 minutes.`,
+    });
+    await db.smsDelivery.update({
+      where: { id: delivery.id },
+      data: { status: 'SENT', sentAt: new Date(), attempts: 1 },
+    });
+  } catch (error) {
+    const smsError = error instanceof SmsError ? error : null;
+    await db.smsDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: smsError?.kind === 'PERMANENT' ? 'REJECTED' : 'FAILED',
+        attempts: 1,
+        failureCode: smsError?.code ?? null,
+        failureText: smsError?.message ?? 'Unknown SMS failure',
+      },
+    });
+
+    // The challenge is consumed rather than left live: a code nobody received
+    // is only useful to someone guessing at it.
+    await db.otpChallenge.update({
+      where: { id: challenge.id },
+      data: { consumedAt: new Date() },
+    });
+
+    throw new AuthError(
+      'We could not send the code. Please check the number and try again.',
+      'SMS_FAILED',
+    );
+  }
 
   return { challengeId: challenge.id, maskedPhone: maskPhone(phone), expiresAt };
 }

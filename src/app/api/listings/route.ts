@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '../../../db/client';
 import { requireCapability, toErrorResponse } from '../../../lib/session';
 import { ListingError, publishListing } from '../../../services/listing-service';
-import { fanOutListing } from '../../../services/match-worker';
 import { PhotoError, assessPhotos, storeListingPhotos } from '../../../services/photo-service';
+import { enqueueFanOut } from '../../../services/job-dispatch';
 
 /**
  * Publish a listing.
@@ -79,10 +79,10 @@ export async function POST(request: Request) {
       });
     }
 
-    // Fan-out belongs on a queue (BullMQ) rather than in the request. A farmer
-    // on 2G must not wait for a match sweep across every alert profile.
-    // Inline for now, deliberately after the response is computed.
-    void fanOutListing(prisma, result.listingId).catch(() => undefined);
+    // Fan-out goes on a queue: a farmer on 2G must not wait for a match sweep
+    // across every alert profile. Falls back to running inline in development,
+    // where there is no queue binding.
+    await enqueueFanOut(result.listingId);
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

@@ -126,6 +126,38 @@ validates the bytes, strips EXIF, and assigns a random key.
 
 ---
 
+## 4b. SMS gateway
+
+Africa's Talking, chosen for Botswana coverage and because it also provides the
+USSD that Phase 3 needs.
+
+1. Create an account and top it up. **An empty balance fails every send**, and
+   the client classifies that as permanent rather than retrying — so it surfaces
+   loudly instead of silently burning attempts.
+2. Register an alphanumeric sender ID (e.g. `KRAAL`). Without one, messages go
+   out on a shared shortcode and look like spam.
+3. Set `AT_API_KEY`, `AT_USERNAME`, `AT_SENDER_ID`. Use `AT_SANDBOX=true` while
+   testing.
+
+The app **refuses to start in production without these** rather than falling
+back to logging codes — a deployment that quietly writes one-time codes to a log
+is worse than one that fails, because the failure is invisible until an account
+is taken over.
+
+Every send is recorded in `sms_deliveries` with its provider reference and cost,
+and never with the message body. Support will need it the first time someone
+says they did not get a code.
+
+## 4c. Queues
+
+```bash
+npx wrangler queues create kraal-jobs
+npx wrangler queues create kraal-jobs-dlq
+```
+
+The bindings are already in `wrangler.jsonc`. With no binding present the app
+runs jobs inline, which is correct for development and wrong for production.
+
 ## 5. Cloudflare secrets
 
 Never put these in `wrangler.jsonc` — it is committed.
@@ -139,6 +171,9 @@ npx wrangler secret put S3_BUCKET
 npx wrangler secret put S3_ACCESS_KEY_ID
 npx wrangler secret put S3_SECRET_ACCESS_KEY
 npx wrangler secret put S3_PUBLIC_BASE_URL
+npx wrangler secret put AT_API_KEY
+npx wrangler secret put AT_USERNAME
+npx wrangler secret put AT_SENDER_ID
 ```
 
 `OTP_PEPPER` is required in production and the app refuses to issue codes
@@ -191,19 +226,7 @@ and that a fourth code request inside the window returns `429`.
 
 These are not deployment steps — they are gaps in the product.
 
-1. **SMS gateway.** `consoleSmsSender` writes codes to the Worker log. Until
-   Africa's Talking is wired, codes are visible to anyone with log access and
-   invisible to users. **This blocks launch, not deployment.**
-
-2. **Alert fan-out runs inline** in the publish request. Fine at pilot volume,
-   wrong at scale — a farmer on 2G should not wait for a sweep across every
-   alert profile. Note that **BullMQ will not work here**: it needs Redis, and
-   Workers has no TCP-persistent Redis. Use **Cloudflare Queues** instead, with
-   the publish route producing and a consumer Worker calling `fanOutListing`.
-   The function already takes a client and is idempotent, so the change is
-   plumbing rather than logic.
-
-3. **Photo serving.** Currently the R2 public URL. Put Cloudflare Images or a
+1. **Photo serving.** Currently the R2 public URL. Put Cloudflare Images or a
    resizing Worker in front before launch, or every listing card downloads a
    full-size photo on a metered connection.
 

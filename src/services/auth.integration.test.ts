@@ -18,6 +18,7 @@ import {
   revokeSession,
   verifyCode,
 } from './auth-service';
+import { SmsError } from './sms/africas-talking';
 
 const PHONE = '71234567';
 const E164 = '+26771234567';
@@ -35,7 +36,7 @@ function captureSender(): SmsSender & { lastCode: () => string } {
 
 async function reset() {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE sessions, otp_challenges, users RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE sessions, otp_challenges, sms_deliveries, users RESTART IDENTITY CASCADE',
   );
 }
 
@@ -103,6 +104,54 @@ describe('requesting a code', () => {
 
     // Same shape, same fields. Nothing to distinguish the two.
     expect(Object.keys(known).sort()).toEqual(Object.keys(unknown).sort());
+  });
+});
+
+describe('SMS delivery logging', () => {
+  it('records a successful send without ever storing the code', async () => {
+    const sender = captureSender();
+    await requestCode(prisma, { phone: PHONE, sender });
+
+    const delivery = await prisma.smsDelivery.findFirstOrThrow();
+    expect(delivery.status).toBe('SENT');
+    expect(delivery.kind).toBe('OTP');
+    expect(delivery.phone).toBe(E164);
+    expect(delivery.sentAt).not.toBeNull();
+    // The body is never persisted — it contains the one-time code.
+    expect(JSON.stringify(delivery)).not.toContain(sender.lastCode());
+  });
+
+  it('records a permanent failure and does not leave a live code behind', async () => {
+    const failing: SmsSender = {
+      async send() {
+        throw new SmsError('InvalidPhoneNumber', 'PERMANENT', '403');
+      },
+    };
+
+    await expect(requestCode(prisma, { phone: PHONE, sender: failing })).rejects.toThrow(
+      /could not send/i,
+    );
+
+    const delivery = await prisma.smsDelivery.findFirstOrThrow();
+    expect(delivery.status).toBe('REJECTED');
+    expect(delivery.failureCode).toBe('403');
+
+    // A code nobody received is only useful to somebody guessing at it.
+    const challenge = await prisma.otpChallenge.findFirstOrThrow();
+    expect(challenge.consumedAt).not.toBeNull();
+  });
+
+  it('distinguishes a transient failure from a permanent one in the log', async () => {
+    const failing: SmsSender = {
+      async send() {
+        throw new SmsError('gateway timeout', 'TRANSIENT', '503');
+      },
+    };
+
+    await expect(requestCode(prisma, { phone: PHONE, sender: failing })).rejects.toThrow();
+
+    const delivery = await prisma.smsDelivery.findFirstOrThrow();
+    expect(delivery.status).toBe('FAILED');
   });
 });
 
