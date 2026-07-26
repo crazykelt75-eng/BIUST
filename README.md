@@ -13,8 +13,8 @@ the source of truth; this README only covers the state of the code.
 
 ## Where the build has got to
 
-Phase 1 foundation. The domain core is built and tested; the application layer
-is not started.
+Phase 1. Domain core, persistence, and the listing → alert vertical are built
+and tested against a real database. No HTTP or UI layer yet.
 
 | Area | State |
 |---|---|
@@ -30,11 +30,16 @@ is not started.
 | Alert matching & delivery | ✅ `src/domain/matching/` |
 | Verification tiers | ✅ `src/domain/verification.ts` |
 | Initial migration (applied, PostGIS) | ✅ `prisma/migrations/` |
+| Setswana + English i18n | ✅ `src/i18n/` |
+| Listing validation (LITS, animals) | ✅ `src/domain/listing/` |
+| Listing publish + anti-theft checks | ✅ `src/services/listing-service.ts` |
+| Animal provenance chain | ✅ `AnimalTransfer` |
+| Alert match worker | ✅ `src/services/match-worker.ts` |
 | Ledger persistence + idempotency | ✅ `src/db/ledger-repository.ts` |
 | Transaction orchestration | ✅ `src/services/transaction-service.ts` |
-| API routes, workers, UI, i18n | ⬜ Not started |
+| API routes, queue wiring, UI | ⬜ Not started |
 
-107 unit tests + 16 integration tests, all passing.
+137 unit tests + 31 integration tests, all passing.
 
 ```bash
 npm install
@@ -104,8 +109,12 @@ src/domain/
   money.ts                Integer thebe, safe splitting, no floats
   verification.ts         Tiers and capability gates
   settlement.ts           Weight tolerance and settlement arithmetic
+  listing/                LITS validation, animal and listing schemas
   ledger/                 Double-entry journal, events, reconciliation
   transaction/            Transaction state machine and timeouts
   zones/                  Movement feasibility between disease-control zones
   matching/               Alert scoring and delivery decisions
+src/db/                   Prisma client, ledger persistence
+src/services/             Listing publication, transactions, match fan-out
+src/i18n/                 Setswana and English catalogue
 ```

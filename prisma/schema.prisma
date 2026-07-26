@@ -100,6 +100,7 @@ model User {
   ratingsGiven   Rating[]       @relation("RatingAuthor")
   ratingsGot     Rating[]       @relation("RatingSubject")
   disputesRaised Dispute[]      @relation("DisputeRaisedBy")
+  ownedAnimals   Animal[]       @relation("AnimalOwner")
   stolenReports  StolenStockReport[]
   fraudFlags     FraudFlag[]
   payouts        Payout[]
@@ -241,7 +242,7 @@ model Listing {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  animals  Animal[]
+  animals  ListingAnimal[]
   media    ListingMedia[]
   offers   Offer[]
   transactions Transaction[]
@@ -301,14 +302,24 @@ enum ListingStatus {
 }
 
 /// Individual cattle record (MASTER_PROMPT §4.2).
+///
+/// One row per real animal, keyed on its LITS ID for the animal's whole life —
+/// NOT one row per listing. An animal is sold, and then years later resold by
+/// its new owner, and both facts belong to the same record.
+///
+/// This is what makes provenance possible, and provenance is the anti-stock-theft
+/// feature (§3.3): the platform knows who sold this animal to whom, and a seller
+/// listing an animal the ledger says belongs to someone else is a hard flag.
 model Animal {
   id        String  @id @default(cuid())
-  listingId String?
-  listing   Listing? @relation(fields: [listingId], references: [id])
 
-  /// LITS traceability ID. Required for cattle. Globally unique — the same LITS ID
-  /// appearing under two sellers is an automatic hard fraud flag (§3.3).
+  /// LITS traceability ID. Required for cattle. Globally unique for the
+  /// animal's lifetime.
   litsId    String  @unique
+  /// Who holds this animal now. Updated on settled transfer, never on listing.
+  currentOwnerId String?
+  currentOwner   User?   @relation("AnimalOwner", fields: [currentOwnerId], references: [id])
+  firstSeenAt    DateTime @default(now())
   brandMarkUrl String?
 
   breed     CattleBreed?
@@ -334,9 +345,44 @@ model Animal {
   updatedAt DateTime @updatedAt
 
   healthEvents AnimalHealthEvent[]
+  listings     ListingAnimal[]
+  transfers    AnimalTransfer[]
 
-  @@index([listingId])
+  @@index([currentOwnerId])
   @@map("animals")
+}
+
+/// Which animals are offered in which listing. An animal appears in many
+/// listings over its life — once per time it is sold.
+model ListingAnimal {
+  id        String  @id @default(cuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  animalId  String
+  animal    Animal  @relation(fields: [animalId], references: [id])
+  /// Set when a buyer claims specific animals from a splittable lot (§6.1).
+  claimedByTransactionId String?
+  position  Int     @default(0)
+
+  @@unique([listingId, animalId])
+  @@index([animalId])
+  @@map("listing_animals")
+}
+
+/// The provenance chain. Append-only: an animal's ownership history is
+/// evidence, and rewriting it is exactly what stock theft would require.
+model AnimalTransfer {
+  id            String   @id @default(cuid())
+  animalId      String
+  animal        Animal   @relation(fields: [animalId], references: [id])
+  fromUserId    String?
+  toUserId      String
+  transactionId String?
+  occurredAt    DateTime @default(now())
+
+  @@index([animalId, occurredAt])
+  @@index([toUserId])
+  @@map("animal_transfers")
 }
 
 enum CattleBreed {
