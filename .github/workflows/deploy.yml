@@ -18,6 +18,14 @@ name: Deploy
 
 on:
   workflow_dispatch:
+  # Deliberate-deploy workaround: GitHub does not register a workflow for API
+  # dispatch until it exists on the default branch. Until this file lands on
+  # main, a deploy is requested by changing .deploy-trigger on this branch —
+  # ordinary commits never fire it, so deploys stay a decision, not a side
+  # effect.
+  push:
+    branches: [claude/farmer-marketplace-platform-yha3pl]
+    paths: ['.deploy-trigger']
 
 permissions:
   contents: read
