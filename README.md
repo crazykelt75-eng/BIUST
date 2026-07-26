@@ -29,21 +29,28 @@ is not started.
 | Zone movement feasibility | ✅ `src/domain/zones/` |
 | Alert matching & delivery | ✅ `src/domain/matching/` |
 | Verification tiers | ✅ `src/domain/verification.ts` |
-| Migrations, API, workers, UI, i18n | ⬜ Not started |
+| Initial migration (applied, PostGIS) | ✅ `prisma/migrations/` |
+| Ledger persistence + idempotency | ✅ `src/db/ledger-repository.ts` |
+| Transaction orchestration | ✅ `src/services/transaction-service.ts` |
+| API routes, workers, UI, i18n | ⬜ Not started |
 
-107 tests, all passing.
+107 unit tests + 16 integration tests, all passing.
 
 ```bash
 npm install
-npm test
+npm test              # unit — no database needed
 npm run typecheck
+
+npm run test:integration   # needs a live PostgreSQL 16 + PostGIS
+npm run test:all
 ```
 
 ## Why the domain core came first
 
-Everything above is pure, dependency-free TypeScript with no database or
-framework in it. That is deliberate — these are the rules that are expensive to
-retrofit and cheap to get right early:
+Everything under `src/domain/` is pure, dependency-free TypeScript with no
+database or framework in it, and `src/db/` and `src/services/` are thin layers
+over it. That is deliberate — these are the rules that are expensive to retrofit
+and cheap to get right early:
 
 - **The ledger.** A double-entry ledger bolted onto months of ad-hoc transfers
   is a reconstruction project. Built first, it costs a week.
@@ -69,7 +76,11 @@ npx prisma migrate dev
 ```
 
 The append-only triggers and ledger constraints must be appended to the initial
-migration — Prisma does not generate them.
+migration — Prisma does not generate them. The committed migration already
+includes them.
+
+Integration tests truncate every table between cases, so point `DATABASE_URL`
+at a disposable database, never a shared one.
 
 ## Before this takes real money
 

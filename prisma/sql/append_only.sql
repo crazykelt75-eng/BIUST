@@ -10,6 +10,13 @@
 -- database. Corrections are new reversing entries (see events.ts `correction`),
 -- never edits.
 --
+-- CAVEAT, and it matters in production: TRUNCATE does not fire row-level
+-- triggers, so these guards do not stop it. The application role must not hold
+-- TRUNCATE privilege on these tables:
+--
+--   REVOKE TRUNCATE ON transaction_events, journal_entries, journal_lines,
+--     audit_log FROM kraal_app;
+--
 -- Apply this as part of the initial migration:
 --   npx prisma migrate dev --create-only --name init
 --   cat prisma/sql/append_only.sql >> prisma/migrations/<timestamp>_init/migration.sql
