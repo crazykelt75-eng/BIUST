@@ -55,7 +55,11 @@ PSQL_URL="$(printf '%s' "$DIRECT_URL" | sed -e 's/?schema=kraal&/?/' -e 's/[?&]s
 # Preflight: Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6
 # ONLY, and most CI runners — GitHub Actions included — have no IPv6 route.
 # Diagnose it here rather than leaving a bare "Network is unreachable".
-if ! psql "$PSQL_URL" -qc 'SELECT 1' > /dev/null 2>&1; then
+PREFLIGHT_ERR="$(psql "$PSQL_URL" -qc 'SELECT 1' 2>&1 >/dev/null)" || PREFLIGHT_FAILED=1
+if [[ -n "${PREFLIGHT_FAILED:-}" ]]; then
+  # Surface what psql actually said — an earlier version swallowed it and left
+  # "cannot reach the database" with no cause, which is nearly useless.
+  echo "psql said: $PREFLIGHT_ERR" >&2
   if [[ "$PSQL_URL" == *db.*.supabase.co* ]]; then
     fail "Cannot reach the database.
 
@@ -71,7 +75,24 @@ if ! psql "$PSQL_URL" -qc 'SELECT 1' > /dev/null 2>&1; then
   Copy the exact host from: Supabase dashboard → Connect → Session pooler.
   Note the username is tenant-qualified: postgres.<ref>, not plain postgres."
   fi
-  fail "Cannot reach the database with DIRECT_URL. Check the host, password (URL-encode @ : / # ?), and that the project is not paused."
+  case "$PREFLIGHT_ERR" in
+    *"Tenant or user not found"*|*"password authentication failed"*)
+      fail "The database rejected the credentials.
+
+  For the SESSION POOLER the username must be tenant-qualified:
+    postgres.<project-ref>          (e.g. postgres.hqnwxckuptagvsizanho)
+  not plain 'postgres'.
+
+  Also check the password is URL-encoded (@ becomes %40).
+  Copy the exact URI from: Supabase dashboard → Connect → Session pooler." ;;
+    *"could not translate host name"*|*"Name or service not known"*)
+      fail "That pooler hostname does not resolve. The region prefix is often
+  aws-0- or aws-1- and varies by project — copy the exact host from:
+  Supabase dashboard → Connect → Session pooler." ;;
+    *)
+      fail "Cannot reach the database with DIRECT_URL (see psql error above).
+  Check the host, the password encoding, and that the project is not paused." ;;
+  esac
 fi
 
 step "1/7 PostGIS + migrations (direct connection)"
