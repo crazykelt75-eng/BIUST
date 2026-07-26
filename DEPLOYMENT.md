@@ -1,0 +1,212 @@
+# Deploying Kraal — Supabase + Cloudflare
+
+Target: **Supabase** for Postgres/PostGIS, **Cloudflare Workers** for the app
+(via OpenNext), **Cloudflare R2** for photos.
+
+> Read §1 before doing anything else. It is the step that, skipped, publishes
+> your session tokens and trust ledger to the public internet.
+
+---
+
+## 1. Supabase exposes every table by default — turn it off
+
+Supabase runs **PostgREST** in front of the database and automatically exposes
+every table in the `public` schema over HTTPS. The `anon` key that authenticates
+those requests is *designed to be public* — it ships in client bundles.
+
+With row-level security off, `anon` can read and write every table in this
+application:
+
+| Table | What leaks |
+|---|---|
+| `sessions` | session token hashes → account takeover |
+| `otp_challenges` | OTP hashes → account takeover |
+| `journal_lines` | the entire trust account ledger |
+| `users` | every farmer's phone number |
+| `animals` | LITS numbers and owners — a shopping list for stock theft |
+| `farms` | exact farm coordinates |
+
+Two mitigations, apply **both**:
+
+**a) Disable the Data API.** This application never uses PostgREST; it talks to
+Postgres directly through Prisma. In the Supabase dashboard:
+*Settings → API → Data API → set the exposed schema to none.*
+
+**b) Deny-all RLS**, as defence in depth:
+
+```bash
+psql "$DIRECT_URL" -f prisma/sql/rls_deny_all.sql
+```
+
+This enables (and `FORCE`s) RLS on every table and creates no policies, which
+denies everything to every role that does not bypass RLS. Prisma connects as
+`postgres`, which does bypass it, so the application is unaffected.
+
+**Re-run it after every migration that adds a table.** A new table arrives with
+RLS off.
+
+Verify — this must return zero rows:
+
+```sql
+SELECT tablename FROM pg_tables
+ WHERE schemaname = 'public' AND tablename <> 'spatial_ref_sys'
+   AND NOT rowsecurity;
+```
+
+And confirm it actually bites, rather than trusting that the script ran:
+
+```sql
+SET ROLE anon;
+SELECT count(*) FROM sessions;   -- must be 0, not your real session count
+RESET ROLE;
+```
+
+---
+
+## 2. Supabase project
+
+1. Create the project. Choose the region closest to Botswana — at time of
+   writing that is `eu-central-1` (Frankfurt) or `ap-south-1` (Mumbai); measure
+   both from a Botswana connection rather than assuming, because the routing
+   matters more than the map.
+
+2. Enable PostGIS. SQL editor:
+
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS postgis;
+   ```
+
+3. Collect **two** connection strings from *Settings → Database*:
+
+   | Variable | Port | Used for | Why |
+   |---|---|---|---|
+   | `DATABASE_URL` | 6543 | runtime | Transaction pooler. Serverless invocations are numerous and short-lived; direct connections exhaust Postgres's limit fast. |
+   | `DIRECT_URL` | 5432 | migrations only | The pooler cannot run DDL — no prepared statements, no advisory locks. |
+
+   Append `?pgbouncer=true&connection_limit=1` to `DATABASE_URL`.
+
+   Getting these the wrong way round gives you a system that works in
+   development and falls over under load, which is the worst time to discover it.
+
+---
+
+## 3. Migrations
+
+```bash
+export DIRECT_URL="postgresql://postgres:...@db.<ref>.supabase.co:5432/postgres"
+export DATABASE_URL="postgresql://postgres:...@...pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+
+npx prisma migrate deploy      # uses DIRECT_URL
+psql "$DIRECT_URL" -f prisma/sql/rls_deny_all.sql
+```
+
+The append-only triggers and ledger constraints are already inside the initial
+migration, so `migrate deploy` installs them. Confirm afterwards:
+
+```sql
+-- Must error: "Table journal_lines is append-only."
+UPDATE journal_lines SET amount = 1 WHERE false;
+```
+
+---
+
+## 4. R2 for photos
+
+R2 speaks the S3 API, so the existing `S3Storage` works unchanged — and R2
+charges no egress, which matters when the product is photographs of cattle
+served to people on metered mobile data.
+
+1. Create a bucket, e.g. `kraal-photos`.
+2. Create an R2 API token with **Object Read & Write** scoped to that bucket.
+3. Connect a custom domain or enable the public r2.dev URL, and set
+   `S3_PUBLIC_BASE_URL` to it.
+
+Do **not** make the bucket publicly writable. Uploads go through the app, which
+validates the bytes, strips EXIF, and assigns a random key.
+
+---
+
+## 5. Cloudflare secrets
+
+Never put these in `wrangler.jsonc` — it is committed.
+
+```bash
+npx wrangler secret put DATABASE_URL
+npx wrangler secret put DIRECT_URL
+npx wrangler secret put OTP_PEPPER            # openssl rand -base64 32
+npx wrangler secret put S3_ENDPOINT           # https://<account>.r2.cloudflarestorage.com
+npx wrangler secret put S3_BUCKET
+npx wrangler secret put S3_ACCESS_KEY_ID
+npx wrangler secret put S3_SECRET_ACCESS_KEY
+npx wrangler secret put S3_PUBLIC_BASE_URL
+```
+
+`OTP_PEPPER` is required in production and the app refuses to issue codes
+without it. Changing it later invalidates every outstanding OTP — harmless, they
+expire in five minutes anyway.
+
+---
+
+## 6. Deploy
+
+```bash
+npm run cf:build      # next build + opennextjs-cloudflare build
+npm run cf:preview    # runs the worker locally against real secrets
+npm run cf:deploy
+```
+
+Two things make this work on Workers and both are easy to undo by accident:
+
+- **`nodejs_compat`** in `wrangler.jsonc`. Prisma's driver adapter routes
+  through `pg`, which needs Node's net/tls shims. Without the flag the worker
+  fails at import, not at query time.
+- **`engineType = "client"`** in `prisma/schema.prisma`. Prisma otherwise emits
+  a ~17 MB native `libquery_engine` binary — a Linux `.so` that cannot execute
+  on Workers and on its own exceeds the worker size limit. Verify after any
+  Prisma upgrade:
+
+  ```bash
+  find .open-next -name '*.node' | wc -l   # must be 0
+  ```
+
+---
+
+## 7. Post-deploy checks
+
+```bash
+BASE=https://kraal.<subdomain>.workers.dev
+
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $BASE/api/listings          # 401
+curl -sI $BASE/ | grep -i content-language                                   # tn
+curl -s -X POST $BASE/api/auth/request-code \
+  -H 'content-type: application/json' -d '{"phone":"71234567"}'              # challengeId
+```
+
+Then confirm the session cookie comes back `HttpOnly; Secure; SameSite=Lax`,
+and that a fourth code request inside the window returns `429`.
+
+---
+
+## Still outstanding before real users
+
+These are not deployment steps — they are gaps in the product.
+
+1. **SMS gateway.** `consoleSmsSender` writes codes to the Worker log. Until
+   Africa's Talking is wired, codes are visible to anyone with log access and
+   invisible to users. **This blocks launch, not deployment.**
+
+2. **Alert fan-out runs inline** in the publish request. Fine at pilot volume,
+   wrong at scale — a farmer on 2G should not wait for a sweep across every
+   alert profile. Note that **BullMQ will not work here**: it needs Redis, and
+   Workers has no TCP-persistent Redis. Use **Cloudflare Queues** instead, with
+   the publish route producing and a consumer Worker calling `fanOutListing`.
+   The function already takes a client and is idempotent, so the change is
+   plumbing rather than logic.
+
+3. **Photo serving.** Currently the R2 public URL. Put Cloudflare Images or a
+   resizing Worker in front before launch, or every listing card downloads a
+   full-size photo on a metered connection.
+
+4. **Backups.** Supabase's automatic backups depend on plan. The trust ledger is
+   financial evidence; confirm point-in-time recovery is on before taking a
+   single real payment.

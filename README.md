@@ -46,7 +46,9 @@ storage are the remaining blockers to it being usable by a real farmer.
 | Server-side capability gates | ✅ `src/lib/session.ts` |
 | Sign-in / verify pages | ✅ `src/app/signin/`, `src/app/verify/` |
 | Photo upload, EXIF handling, storage | ✅ `src/services/photo-service.ts` |
-| BullMQ queue, SMS gateway | ⬜ Not started |
+| Supabase + Cloudflare deploy config | ✅ `DEPLOYMENT.md`, `wrangler.jsonc` |
+| Deny-all RLS for Supabase | ✅ `prisma/sql/rls_deny_all.sql` |
+| Queue (Cloudflare Queues), SMS gateway | ⬜ Not started |
 
 175 unit tests + 52 integration tests, all passing.
 
@@ -97,6 +99,15 @@ includes them.
 
 Integration tests truncate every table between cases, so point `DATABASE_URL`
 at a disposable database, never a shared one.
+
+## Deploying
+
+See **[`DEPLOYMENT.md`](./DEPLOYMENT.md)** for Supabase + Cloudflare.
+
+Read §1 of it before anything else: Supabase exposes every `public` table over
+HTTPS via PostgREST using a key that is public by design. Without the deny-all
+RLS in `prisma/sql/rls_deny_all.sql`, session token hashes and the trust ledger
+are world-readable.
 
 ## Configuration
 

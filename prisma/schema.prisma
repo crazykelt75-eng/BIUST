@@ -9,13 +9,23 @@
 //     This is enforced by DB triggers in the migration, not merely by convention.
 
 generator client {
-  provider        = "prisma-client-js"
+  provider = "prisma-client-js"
+  // queryCompiler replaces the Rust query engine with a WASM/TS one, so no
+  // native binary is emitted. Without this, Prisma ships a ~17 MB
+  // libquery_engine .so into the bundle — a Linux binary that cannot execute
+  // on Workers and on its own exceeds the worker size limit.
+  // Both driverAdapters and queryCompiler are GA in Prisma 6.19 and no longer
+  // need to be named as preview features.
+  engineType      = "client"
   previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider   = "postgresql"
+  // Runtime: Supabase transaction pooler (6543).
   url        = env("DATABASE_URL")
+  // Migrations: direct connection (5432). The pooler cannot run DDL.
+  directUrl  = env("DIRECT_URL")
   extensions = [postgis]
 }
 

@@ -9,9 +9,6 @@
  * here should ever contain a farm's coordinates.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join, normalize, resolve, sep } from 'node:path';
-
 import { type ImageFormat, contentTypeFor } from '../domain/media/validation';
 
 export interface StoredObject {
@@ -23,44 +20,6 @@ export interface StoredObject {
 export interface ObjectStorage {
   put(args: { key: string; body: Uint8Array; format: ImageFormat }): Promise<StoredObject>;
   publicUrl(key: string): string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Local filesystem — development and tests
-// ─────────────────────────────────────────────────────────────────────────────
-
-export class LocalStorage implements ObjectStorage {
-  constructor(
-    private readonly root: string,
-    private readonly baseUrl: string = '/uploads',
-  ) {}
-
-  async put(args: { key: string; body: Uint8Array; format: ImageFormat }): Promise<StoredObject> {
-    const path = this.resolveWithin(args.key);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, args.body);
-    return { key: args.key, url: this.publicUrl(args.key), bytes: args.body.length };
-  }
-
-  publicUrl(key: string): string {
-    return `${this.baseUrl}/${key}`;
-  }
-
-  /**
-   * Refuse to write outside the storage root.
-   *
-   * Keys are generated server-side, so traversal should be impossible — but
-   * "should be impossible" is how directory traversal keeps happening, and the
-   * check costs nothing.
-   */
-  private resolveWithin(key: string): string {
-    const root = resolve(this.root);
-    const path = resolve(join(root, normalize(key)));
-    if (path !== root && !path.startsWith(root + sep)) {
-      throw new Error(`Refusing to write outside the storage root: ${key}`);
-    }
-    return path;
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,7 +187,7 @@ let cached: ObjectStorage | null = null;
  * checkout runs without cloud credentials. In production that fallback is a
  * misconfiguration, not a convenience, so it refuses.
  */
-export function storage(): ObjectStorage {
+export async function storage(): Promise<ObjectStorage> {
   if (cached) return cached;
 
   const endpoint = process.env.S3_ENDPOINT;
@@ -248,6 +207,8 @@ export function storage(): ObjectStorage {
     return cached;
   }
 
+  // Production must never silently write photos to a container filesystem that
+  // vanishes on the next deploy.
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
       'Object storage is not configured. Set S3_ENDPOINT, S3_BUCKET, ' +
@@ -255,8 +216,20 @@ export function storage(): ObjectStorage {
     );
   }
 
-  cached = new LocalStorage(process.env.LOCAL_STORAGE_DIR ?? '.uploads');
+  cached = await localStorage();
   return cached;
+}
+
+/**
+ * Filesystem-backed storage for local development and tests.
+ *
+ * Loaded through a dynamic import so `node:fs` never enters the Cloudflare
+ * Workers bundle. A static import here would be pulled in by the bundler
+ * regardless of whether the branch is reachable, and the deploy would fail.
+ */
+export async function localStorage(root?: string): Promise<ObjectStorage> {
+  const { LocalStorage } = await import('./storage-local');
+  return new LocalStorage(root ?? process.env.LOCAL_STORAGE_DIR ?? '.uploads');
 }
 
 /** Test seam. */

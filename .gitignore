@@ -22,3 +22,5 @@ prisma/generated/
 # Next build output
 .next/
 .uploads/
+.open-next/
+.wrangler/

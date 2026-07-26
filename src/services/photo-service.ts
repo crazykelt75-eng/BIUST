@@ -51,7 +51,7 @@ export async function storeListingPhotos(
     );
   }
 
-  const store = args.store ?? storage();
+  const store = args.store ?? (await storage());
   const stored: StoredPhoto[] = [];
 
   for (const [index, file] of files.entries()) {
