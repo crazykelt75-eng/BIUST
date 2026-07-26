@@ -148,15 +148,26 @@ Every send is recorded in `sms_deliveries` with its provider reference and cost,
 and never with the message body. Support will need it the first time someone
 says they did not get a code.
 
-## 4c. Queues
+## 4c. Queues — deliberately off for the first deploy
+
+Queue bindings are commented out in `wrangler.jsonc`. With no `QUEUE` binding
+the app runs fan-out inline in the request, which is correct at test volume and
+means the queues need not exist before the first deploy. The config comment
+documents how to re-enable them (create the queues, add a wrapper entry that
+gives the worker a `queue()` handler) when volume justifies it.
+
+## 4d. The short path: one command
 
 ```bash
-npx wrangler queues create kraal-jobs
-npx wrangler queues create kraal-jobs-dlq
+cp .deploy.env.example .deploy.env   # fill in Supabase creds + OTP_PEPPER
+npx wrangler login
+./scripts/deploy.sh
 ```
 
-The bindings are already in `wrangler.jsonc`. With no binding present the app
-runs jobs inline, which is correct for development and wrong for production.
+The script runs migrations, forces RLS and refuses to continue if any table is
+left unprotected, seeds zones, pushes secrets, builds, deploys, and smoke-tests
+the URL. Everything below documents what it does, for when a step needs to be
+run by hand.
 
 ## 5. Cloudflare secrets
 

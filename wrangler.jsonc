@@ -18,22 +18,25 @@
     "enabled": true
   },
 
-  // Fan-out runs off the request path. BullMQ is not an option here — it needs
-  // a persistent Redis connection, which Workers cannot hold.
-  "queues": {
-    "producers": [{ "queue": "kraal-jobs", "binding": "QUEUE" }],
-    "consumers": [
-      {
-        "queue": "kraal-jobs",
-        "max_batch_size": 10,
-        "max_batch_timeout": 5,
-        // Consumers are idempotent (fanOutListing upserts on a unique key), so
-        // at-least-once redelivery is safe.
-        "max_retries": 3,
-        "dead_letter_queue": "kraal-jobs-dlq"
-      }
-    ]
-  },
+  // Queues are DISABLED for the first test deploy, deliberately.
+  //
+  // Two reasons. First, attaching a consumer here was a bug: the OpenNext-
+  // generated worker exports only fetch, so queue messages would have been
+  // delivered to a handler that does not exist. Re-enabling needs a wrapper
+  // entry that re-exports the OpenNext handler and adds queue() from
+  // src/workers/queue-consumer.ts. Second, with no QUEUE binding the app runs
+  // fan-out inline in the request — correct at test volume, and it means the
+  // queues do not have to exist before the first deploy.
+  //
+  // To enable later:
+  //   npx wrangler queues create kraal-jobs && npx wrangler queues create kraal-jobs-dlq
+  //   add the wrapper entry, then restore:
+  // "queues": {
+  //   "producers": [{ "queue": "kraal-jobs", "binding": "QUEUE" }],
+  //   "consumers": [{ "queue": "kraal-jobs", "max_batch_size": 10,
+  //     "max_batch_timeout": 5, "max_retries": 3,
+  //     "dead_letter_queue": "kraal-jobs-dlq" }]
+  // },
 
   // Secrets are NOT set here. Use `wrangler secret put NAME` so they never
   // enter the repository:
