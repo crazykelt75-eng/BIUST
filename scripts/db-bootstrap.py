@@ -45,6 +45,20 @@ API = "https://api.supabase.com/v1/projects/{ref}/database/query"
 # tool honestly so the rejection is not mistaken for an auth failure.
 USER_AGENT = "kraal-deploy/1.0 (+https://github.com/crazykelt75-eng/BIUST)"
 
+# Roles Supabase manages itself. The Management API runs SQL as `postgres`,
+# which on Supabase is NOT a superuser, so it cannot alter these — not even
+# itself. Their passwords come from the dashboard only.
+RESERVED_ROLES = {
+    "postgres",
+    "supabase_admin",
+    "supabase_auth_admin",
+    "supabase_storage_admin",
+    "authenticator",
+    "anon",
+    "authenticated",
+    "service_role",
+}
+
 
 def parse(name):
     """Pull the role, password and project ref out of a connection string."""
@@ -76,7 +90,7 @@ def literal(value):
     return "'" + value.replace("'", "''") + "'"
 
 
-def execute(ref, token, query, label):
+def execute(ref, token, query, label, optional=False):
     request = urllib.request.Request(
         API.format(ref=ref),
         data=json.dumps({"query": query}).encode(),
@@ -94,6 +108,23 @@ def execute(ref, token, query, label):
     except urllib.error.HTTPError as error:
         body = error.read().decode(errors="replace")[:500]
         # Never echo the query — it contains a password.
+
+        # Supabase's `postgres` is not a superuser and cannot alter privileged
+        # roles, including itself. Its password is settable only from the
+        # dashboard, by design. That is not necessarily a problem: the password
+        # already in the secret may well be correct, and the preflight is what
+        # actually knows. So say what happened and carry on rather than
+        # failing a deploy that might have been fine.
+        if optional and "permission denied to alter role" in body:
+            print(
+                f"  — {label} skipped: Supabase does not permit it.\n"
+                f"    'postgres' is a privileged role; its password is settable only at\n"
+                f"    Supabase dashboard → Settings → Database → Reset database password.\n"
+                f"    Continuing — the preflight will say whether the current one works.",
+                flush=True,
+            )
+            return
+
         hint = ""
         if error.code == 401:
             hint = "\n  The access token was rejected. Check it has not been revoked."
@@ -142,6 +173,9 @@ def main():
             token,
             f"ALTER ROLE {ident(role)} WITH PASSWORD {literal(password)}",
             f"password set for {role}",
+            # Supabase reserves its own roles. Ours we can set outright; a
+            # reserved one we can only ask about and report on.
+            optional=role in RESERVED_ROLES,
         )
 
     # The silent failure this deployment is most exposed to: the runtime role
