@@ -13,9 +13,9 @@ the source of truth; this README only covers the state of the code.
 
 ## Where the build has got to
 
-Phase 1. Domain core, persistence, the listing → alert vertical, and the
-seller-facing UI are built and tested. The app builds and runs; auth and photo
-storage are the remaining blockers to it being usable by a real farmer.
+Phase 1, walkable end to end: signup → farm → verification → publish →
+offer → accept, verified against a running server. `LIVE_TESTING.md` is the
+tester's guide.
 
 | Area | State |
 |---|---|
@@ -51,9 +51,13 @@ storage are the remaining blockers to it being usable by a real farmer.
 | SMS gateway (Africa's Talking) | ✅ `src/services/sms/` |
 | SMS delivery log | ✅ `SmsDelivery` |
 | Cloudflare Queues fan-out | ✅ `src/services/queue.ts`, `src/workers/` |
-| Photo resizing, USSD, syndicates | ⬜ Not started |
+| Offers: make/accept/decline/counter | ✅ `src/services/offer-service.ts` |
+| Onboarding: farm + verification + tier | ✅ `src/services/onboarding-service.ts` |
+| Listing detail, dashboard, admin queue | ✅ `src/app/` |
+| Seed + live-test guide | ✅ `prisma/seed.mjs`, `LIVE_TESTING.md` |
+| Escrow UI, photo resizing, syndicates | ⬜ Not started |
 
-191 unit tests + 55 integration tests, all passing.
+194 unit tests + 55 integration tests, all passing.
 
 ```bash
 npm install

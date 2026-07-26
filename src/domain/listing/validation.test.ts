@@ -117,6 +117,22 @@ describe('listings', () => {
     expect(cattleListingSchema.safeParse(listing()).success).toBe(true);
   });
 
+  it('accepts root-relative photo URLs from the local storage backend', () => {
+    const result = cattleListingSchema.safeParse(
+      listing({ photoUrls: ['/uploads/listings/ab/x.jpg', '/uploads/a.jpg', '/uploads/b.jpg'] }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects hostile photo URLs — they go straight into <img src>', () => {
+    for (const bad of ['javascript:alert(1)', '//evil.example/x.jpg', '/uploads/../../etc', 'x.jpg']) {
+      const result = cattleListingSchema.safeParse(
+        listing({ photoUrls: [bad, 'https://cdn.example.com/2.jpg', 'https://cdn.example.com/3.jpg'] }),
+      );
+      expect(result.success, bad).toBe(false);
+    }
+  });
+
   it('requires at least three photos', () => {
     const result = cattleListingSchema.safeParse(listing({ photoUrls: ['https://a/1.jpg'] }));
     expect(result.success).toBe(false);

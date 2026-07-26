@@ -37,8 +37,15 @@ export default async function VerifyPage() {
       <p className="mt-6 text-sm opacity-70">{t(locale, 'verify.pending')}</p>
 
       <Link
+        href="/onboarding"
+        className="touch-target mt-6 flex items-center justify-center rounded-xl bg-veld-600 font-bold text-white"
+      >
+        {t(locale, 'action.continue')}
+      </Link>
+
+      <Link
         href="/"
-        className="touch-target mt-6 flex items-center justify-center rounded-xl border border-kraal-300 font-semibold"
+        className="touch-target mt-3 flex items-center justify-center rounded-xl border border-kraal-300 font-semibold"
       >
         {t(locale, 'action.back')}
       </Link>

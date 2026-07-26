@@ -27,7 +27,7 @@ export default async function SellPage() {
     select: { id: true },
   });
 
-  if (!farm) redirect('/verify');
+  if (!farm) redirect('/onboarding');
 
   return <ListingForm farmId={farm.id} />;
 }

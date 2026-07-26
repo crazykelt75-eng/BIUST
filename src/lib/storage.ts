@@ -210,9 +210,22 @@ export async function storage(): Promise<ObjectStorage> {
   // Production must never silently write photos to a container filesystem that
   // vanishes on the next deploy.
   if (process.env.NODE_ENV === 'production') {
+    // Explicit opt-in for live testing on a machine that has a disk. This can
+    // never work on Cloudflare Workers (no filesystem — R2 is required there);
+    // it exists for `next start` on a VPS or a local production build.
+    if (process.env.ALLOW_LOCAL_STORAGE === 'true') {
+      console.warn(
+        '[storage] ALLOW_LOCAL_STORAGE is enabled in production. Photos are ' +
+          'being written to the local disk and will NOT survive a redeploy. ' +
+          'This is for LIVE TESTING ONLY.',
+      );
+      cached = await localStorage();
+      return cached;
+    }
     throw new Error(
       'Object storage is not configured. Set S3_ENDPOINT, S3_BUCKET, ' +
-        'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.',
+        'S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY — or ALLOW_LOCAL_STORAGE=true ' +
+        'for a disk-backed test deployment only.',
     );
   }
 
@@ -229,7 +242,8 @@ export async function storage(): Promise<ObjectStorage> {
  */
 export async function localStorage(root?: string): Promise<ObjectStorage> {
   const { LocalStorage } = await import('./storage-local');
-  return new LocalStorage(root ?? process.env.LOCAL_STORAGE_DIR ?? '.uploads');
+  // public/uploads so Next serves the files statically in a local test build.
+  return new LocalStorage(root ?? process.env.LOCAL_STORAGE_DIR ?? 'public/uploads');
 }
 
 /** Test seam. */

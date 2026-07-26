@@ -230,9 +230,19 @@ export function resolveSender(): SmsSender {
   }
 
   if (process.env.NODE_ENV === 'production') {
+    // Explicit, deliberate escape hatch for live testing before an SMS account
+    // exists. It must be opted into by name — never a silent fallback — and it
+    // shouts on every send so it cannot be forgotten in a real deployment.
+    if (process.env.ALLOW_CONSOLE_SMS === 'true') {
+      console.warn(
+        '[sms] ALLOW_CONSOLE_SMS is enabled in production. One-time codes are ' +
+          'being written to the log. This is for LIVE TESTING ONLY.',
+      );
+      return consoleSender;
+    }
     throw new Error(
-      'No SMS gateway configured. Set AT_API_KEY and AT_USERNAME. ' +
-        'Refusing to fall back to logging one-time codes in production.',
+      'No SMS gateway configured. Set AT_API_KEY and AT_USERNAME, or set ' +
+        'ALLOW_CONSOLE_SMS=true for a test deployment only.',
     );
   }
 

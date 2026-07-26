@@ -21,7 +21,8 @@
     "cf:build": "opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy",
-    "db:rls": "psql \"$DIRECT_URL\" -f prisma/sql/rls_deny_all.sql"
+    "db:rls": "psql \"$DIRECT_URL\" -f prisma/sql/rls_deny_all.sql",
+    "db:seed": "node prisma/seed.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",

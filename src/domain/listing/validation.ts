@@ -181,6 +181,20 @@ export const PHASE_1_MECHANISMS = ['FIXED_PRICE', 'BEST_OFFER'] as const;
 
 export const MIN_PHOTOS = 3;
 
+/**
+ * A photo URL is either absolute (R2/CDN) or root-relative (`/uploads/...`,
+ * the local test backend serving from the same origin). Anything else —
+ * `javascript:`, protocol-relative, bare filenames — is rejected. The check
+ * exists because these URLs go straight into <img src>, and an attacker-shaped
+ * URL there is a stored-XSS vector.
+ */
+const photoUrlSchema = z.string().refine(
+  (value) =>
+    /^https:\/\/[^\s]+$/i.test(value) ||
+    (/^\/[^/\s]/.test(value) && !value.includes('..')),
+  'Photo URL must be https or a root-relative path',
+);
+
 const baseListingSchema = z.object({
   farmId: z.string().min(1),
   title: z.string().trim().min(3).max(120),
@@ -198,7 +212,7 @@ const baseListingSchema = z.object({
   availableUntil: z.coerce.date().optional(),
   collectionTerms: z.enum(['BUYER_COLLECTS', 'SELLER_DELIVERS', 'NEGOTIABLE']).default('BUYER_COLLECTS'),
   inspectionWelcome: z.boolean().default(true),
-  photoUrls: z.array(z.string().url()).default([]),
+  photoUrls: z.array(photoUrlSchema).default([]),
 });
 
 export const cattleListingSchema = baseListingSchema

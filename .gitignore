@@ -24,3 +24,4 @@ prisma/generated/
 .uploads/
 .open-next/
 .wrangler/
+public/uploads/

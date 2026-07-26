@@ -173,8 +173,23 @@ describe('sender selection', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('AT_API_KEY', '');
     vi.stubEnv('AT_USERNAME', '');
+    vi.stubEnv('ALLOW_CONSOLE_SMS', '');
 
-    expect(() => resolveSender()).toThrow(/Refusing to fall back/);
+    expect(() => resolveSender()).toThrow(/No SMS gateway configured/);
+  });
+
+  it('allows the console sender in production only by explicit named opt-in', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AT_API_KEY', '');
+    vi.stubEnv('AT_USERNAME', '');
+    vi.stubEnv('ALLOW_CONSOLE_SMS', 'true');
+
+    // Opting in works — for a test deployment — and anything short of the
+    // exact string does not.
+    expect(resolveSender()).toBeDefined();
+
+    vi.stubEnv('ALLOW_CONSOLE_SMS', '1');
+    expect(() => resolveSender()).toThrow(/No SMS gateway configured/);
   });
 
   it('uses the console sender in development', () => {
