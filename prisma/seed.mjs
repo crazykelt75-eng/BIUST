@@ -15,6 +15,9 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+// Against Supabase, connect as kraal_app — its role-level search_path routes
+// unqualified queries into the kraal schema. Locally the default role +
+// public schema are used unchanged.
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 

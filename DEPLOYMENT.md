@@ -3,6 +3,32 @@
 Target: **Supabase** for Postgres/PostGIS, **Cloudflare Workers** for the app
 (via OpenNext), **Cloudflare R2** for photos.
 
+## Current state (provisioned 2026-07-26)
+
+The database side is **done**, in the `kraal` schema of the existing shared
+Supabase project (`hqnwxckuptagvsizanho`, chosen over a new $10/month project):
+all four migrations applied, Prisma history bookkept with real checksums,
+append-only + ledger triggers installed and verified live, deny-all RLS forced
+on all 30 tables, zones + test admin (+26771000000) seeded, and the other
+application in `public` untouched.
+
+The app connects as the dedicated `kraal_app` role. Its **role-level
+search_path** routes unqualified queries into the kraal schema server-side —
+per-connection parameters do not survive the transaction pooler, and the
+adapter's schema option was tested and does nothing. The role has least
+privilege (nothing in `public`) and an explicit RLS allow policy per table.
+
+Remaining, on a machine with `wrangler login`:
+
+1. Set the runtime role's password (Supabase SQL editor, once):
+   `ALTER ROLE kraal_app PASSWORD '...';` — it is created unusable until then.
+2. `cp .deploy.env.example .deploy.env`, fill in, `./scripts/deploy.sh`.
+
+The sections below document the full path for a fresh, dedicated project. On
+the shared project, **never run `rls_deny_all.sql`** — it is public-scoped and
+would break the other application; `deploy.sh` carries a kraal-scoped version
+and hard-stops without `?schema=kraal` in `DIRECT_URL`.
+
 > Read §1 before doing anything else. It is the step that, skipped, publishes
 > your session tokens and trust ledger to the public internet.
 

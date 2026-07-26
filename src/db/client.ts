@@ -42,6 +42,14 @@ function createClient(): PrismaClient {
     connectionTimeoutMillis: 10_000,
   });
 
+  // Schema note: on Supabase, Kraal lives in the `kraal` schema, isolated from
+  // the unrelated app in `public`. That is NOT configured here — the adapter's
+  // schema option demonstrably does not set the search_path, and per-connection
+  // startup parameters do not survive the transaction pooler. Instead the app
+  // connects as the `kraal_app` role, whose role-level `SET search_path =
+  // kraal, extensions` is applied server-side on every connection, through any
+  // pooler. Locally, the default role and `public` schema are used unchanged.
+
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],

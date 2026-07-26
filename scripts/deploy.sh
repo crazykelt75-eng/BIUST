@@ -40,6 +40,11 @@ step() { echo; echo "━━ $1"; }
 [[ "${#OTP_PEPPER}" -ge 16 ]] || fail "OTP_PEPPER must be at least 16 characters"
 [[ "$DATABASE_URL" == *6543* ]] || echo "⚠ DATABASE_URL does not look like the 6543 pooler — check it"
 [[ "$DIRECT_URL"   == *5432* ]] || echo "⚠ DIRECT_URL does not look like the 5432 direct port — check it"
+# The database is shared with another application in public. Prisma finds its
+# migration history through ?schema=kraal; without it, migrate deploy would try
+# to re-apply the whole schema into public, on top of the other app. Hard stop.
+[[ "$DIRECT_URL" == *schema=kraal* ]] || fail "DIRECT_URL must include ?schema=kraal (shared database — see .deploy.env.example)"
+[[ "$DATABASE_URL" == *kraal_app* ]] || echo "⚠ DATABASE_URL does not use the kraal_app role — runtime queries will not resolve the kraal schema"
 
 npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: npx wrangler login"
 
@@ -47,12 +52,28 @@ step "1/7 PostGIS + migrations (direct connection)"
 psql "$DIRECT_URL" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
 npx prisma migrate deploy
 
-step "2/7 Deny-all RLS (the step that keeps the ledger off the public internet)"
-psql "$DIRECT_URL" -qf prisma/sql/rls_deny_all.sql
+step "2/7 Deny-all RLS on the kraal schema"
+# Scoped STRICTLY to the kraal schema. This database is shared with another
+# application in public; the public-scoped rls_deny_all.sql must NEVER run here.
+psql "$DIRECT_URL" -q <<'SQL'
+DO $$
+DECLARE t text;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='kraal' LOOP
+    EXECUTE format('ALTER TABLE kraal.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE kraal.%I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS kraal_app_all ON kraal.%I', t);
+    EXECUTE format('CREATE POLICY kraal_app_all ON kraal.%I FOR ALL TO kraal_app USING (true) WITH CHECK (true)', t);
+  END LOOP;
+END $$;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA kraal TO kraal_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA kraal TO kraal_app;
+REVOKE ALL ON ALL TABLES IN SCHEMA kraal FROM anon, authenticated;
+SQL
 UNPROTECTED=$(psql "$DIRECT_URL" -tAc \
-  "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename<>'spatial_ref_sys' AND NOT rowsecurity")
-[[ "$UNPROTECTED" == "0" ]] || fail "$UNPROTECTED table(s) still have RLS off — refusing to continue"
-echo "✓ RLS forced on every table"
+  "SELECT count(*) FROM pg_tables WHERE schemaname='kraal' AND NOT rowsecurity")
+[[ "$UNPROTECTED" == "0" ]] || fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
+echo "✓ RLS forced on every kraal table; kraal_app policy refreshed" 
 
 step "3/7 Seed (zones + optional test admin)"
 node prisma/seed.mjs
