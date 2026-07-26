@@ -226,7 +226,13 @@ optionally `CLOUDFLARE_ACCOUNT_ID`.
 |---|---|
 | 30221535961 | ❌ `psql: invalid URI query parameter: "schema"` — psql cannot take Prisma's `?schema=`. Fixed: script strips it into `PSQL_URL`. |
 | 30222276887 | ❌ `Network is unreachable` on `db.<ref>.supabase.co:5432` — IPv6-only host, no IPv6 on GitHub runners. Fixed: `DIRECT_URL` must use the **session pooler**; script now preflights and diagnoses. Needs the user to update the `DIRECT_URL` secret. |
+| 30222628106 | ❌ `FATAL: password authentication failed for user "postgres"`. Host resolved and connected — the IPv6 problem was solved. The pooler is multi-tenant and **routes on the username**, which must be `postgres.<project-ref>`; plain `postgres` matches no tenant and is reported as a password failure. Fixed by updating the secret; script now checks both URLs' usernames before connecting. |
 | (next) | **Check this first.** |
+
+Four failures, four different pieces of infrastructure plumbing — libpq
+parameter handling, IPv6, a swallowed diagnostic, the pooler username. None was
+application code. Each fix is in `scripts/deploy.sh` and each now fails with the
+correction spelled out rather than with the raw symptom.
 
 ### Known deploy gotchas
 
@@ -235,6 +241,11 @@ optionally `CLOUDFLARE_ACCOUNT_ID`.
   `DIRECT_URL` need `%40`. This caused a round trip.
 - **Never use `db.<ref>.supabase.co` from CI** — IPv6 only. Session pooler
   (`…pooler.supabase.com:5432`) is the IPv4 equivalent. See §4.
+- **Pooler usernames carry the project ref**: `postgres.hqnwxckuptagvsizanho`,
+  `kraal_app.hqnwxckuptagvsizanho`. The poolers are multi-tenant and route on
+  the username; a plain one is rejected as *"password authentication failed"*,
+  which sends you hunting for a password problem that does not exist. Only the
+  pooler hosts need this — a direct connection takes the bare role name.
 - **Migrations are already applied**, so steps 1–3 of the script are
   verification no-ops. They are still not optional: step 2 is what forces RLS
   and refreshes the `kraal_app` policy on any newly added table.

@@ -48,61 +48,107 @@ step() { echo; echo "━━ $1"; }
 
 npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: npx wrangler login"
 
-# psql speaks libpq, which rejects Prisma's ?schema= parameter outright. Strip
-# it for psql; Prisma keeps the full URL.
-PSQL_URL="$(printf '%s' "$DIRECT_URL" | sed -e 's/?schema=kraal&/?/' -e 's/[?&]schema=kraal//')"
+# psql speaks libpq, which rejects Prisma's query parameters outright — it errors
+# on the URI rather than ignoring what it does not know. Drop them for psql;
+# Prisma keeps the full URL.
+psql_url() {
+  local url="$1" base out= kv
+  base="${url%%\?*}"
+  if [[ "$url" == *\?* ]]; then
+    local IFS='&'
+    for kv in ${url#*\?}; do
+      case "$kv" in schema=*|pgbouncer=*|connection_limit=*) continue ;; esac
+      out="${out:+$out&}$kv"
+    done
+  fi
+  printf '%s%s' "$base" "${out:+?$out}"
+}
 
-# Preflight: Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6
-# ONLY, and most CI runners — GitHub Actions included — have no IPv6 route.
-# Diagnose it here rather than leaving a bare "Network is unreachable".
-PREFLIGHT_ERR="$(psql "$PSQL_URL" -qc 'SELECT 1' 2>&1 >/dev/null)" || PREFLIGHT_FAILED=1
-if [[ -n "${PREFLIGHT_FAILED:-}" ]]; then
+# Supabase's poolers are multi-tenant and route on the USERNAME, so it must
+# carry the project ref as a suffix: postgres.<ref>, kraal_app.<ref>. A plain
+# username matches no tenant and is rejected as "password authentication
+# failed" — which reads like a wrong password and sends you looking in entirely
+# the wrong place. Catch it here, where the fix can be spelled out.
+check_pooler_user() {
+  local name="$1" url="$2" user
+  [[ "$url" == *pooler.supabase.com* ]] || return 0
+  user="${url#*://}"; user="${user%%:*}"
+  [[ "$user" == *.* ]] && return 0
+  fail "$name connects to the pooler as '$user', with no project ref.
+
+  Pooler usernames are tenant-qualified. Change the username to:
+    $user.<project-ref>          e.g. $user.hqnwxckuptagvsizanho
+
+  Everything else in the URL stays as it is. Copy the exact URI from:
+  Supabase dashboard → Connect → (Session pooler for DIRECT_URL,
+  Transaction pooler for DATABASE_URL)."
+}
+
+# Validate BOTH before spending a connection on either: a run that clears the
+# migration URL only to fail on the runtime URL five minutes later costs another
+# whole round trip, and these are the same two mistakes each time.
+check_pooler_user DIRECT_URL   "$DIRECT_URL"
+check_pooler_user DATABASE_URL "$DATABASE_URL"
+
+PSQL_DIRECT="$(psql_url "$DIRECT_URL")"
+PSQL_RUNTIME="$(psql_url "$DATABASE_URL")"
+
+# Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6 ONLY, and most
+# CI runners — GitHub Actions included — have no IPv6 route. Diagnose it here
+# rather than leaving a bare "Network is unreachable".
+preflight() {
+  local name="$1" url="$2" err
+  err="$(psql "$url" -qc 'SELECT 1' 2>&1 >/dev/null)" && return 0
+
   # Surface what psql actually said — an earlier version swallowed it and left
   # "cannot reach the database" with no cause, which is nearly useless.
-  echo "psql said: $PREFLIGHT_ERR" >&2
-  if [[ "$PSQL_URL" == *db.*.supabase.co* ]]; then
-    fail "Cannot reach the database.
+  echo "psql said: $err" >&2
+  if [[ "$url" == *db.*.supabase.co* ]]; then
+    fail "Cannot reach the database with $name.
 
-  DIRECT_URL points at db.<ref>.supabase.co, which Supabase serves over IPv6
-  only. GitHub Actions runners have no IPv6 route, so this can never connect
-  from CI.
+  It points at db.<ref>.supabase.co, which Supabase serves over IPv6 only.
+  GitHub Actions runners have no IPv6 route, so this can never connect from CI.
 
-  Use the SESSION POOLER instead — same capabilities (DDL, prepared
-  statements), but reachable over IPv4:
+  Use a POOLER host instead — the session pooler (5432) supports everything a
+  direct connection does, DDL and prepared statements included:
 
     postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?schema=kraal
 
-  Copy the exact host from: Supabase dashboard → Connect → Session pooler.
-  Note the username is tenant-qualified: postgres.<ref>, not plain postgres."
+  Copy the exact host from: Supabase dashboard → Connect."
   fi
-  case "$PREFLIGHT_ERR" in
+  case "$err" in
     *"Tenant or user not found"*|*"password authentication failed"*)
-      fail "The database rejected the credentials.
+      fail "The database rejected $name's credentials.
 
-  For the SESSION POOLER the username must be tenant-qualified:
-    postgres.<project-ref>          (e.g. postgres.hqnwxckuptagvsizanho)
-  not plain 'postgres'.
+  The username is tenant-qualified (postgres.<ref>) and looks right, so check
+  the PASSWORD — in a URL it must be percent-encoded: @ becomes %40, # becomes
+  %23, / becomes %2F. An unencoded @ silently truncates the host.
 
-  Also check the password is URL-encoded (@ becomes %40).
-  Copy the exact URI from: Supabase dashboard → Connect → Session pooler." ;;
+  And confirm the role's password is actually set. kraal_app is created
+  unusable; it needs, once, in the Supabase SQL editor:
+    ALTER ROLE kraal_app PASSWORD '...';" ;;
     *"could not translate host name"*|*"Name or service not known"*)
-      fail "That pooler hostname does not resolve. The region prefix is often
+      fail "$name's hostname does not resolve. The region prefix is often
   aws-0- or aws-1- and varies by project — copy the exact host from:
-  Supabase dashboard → Connect → Session pooler." ;;
+  Supabase dashboard → Connect." ;;
     *)
-      fail "Cannot reach the database with DIRECT_URL (see psql error above).
+      fail "Cannot reach the database with $name (see psql error above).
   Check the host, the password encoding, and that the project is not paused." ;;
   esac
-fi
+}
+
+preflight DIRECT_URL   "$PSQL_DIRECT"
+preflight DATABASE_URL "$PSQL_RUNTIME"
+echo "✓ both connection strings reach the database"
 
 step "1/7 PostGIS + migrations (direct connection)"
-psql "$PSQL_URL" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
+psql "$PSQL_DIRECT" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
 npx prisma migrate deploy
 
 step "2/7 Deny-all RLS on the kraal schema"
 # Scoped STRICTLY to the kraal schema. This database is shared with another
 # application in public; the public-scoped rls_deny_all.sql must NEVER run here.
-psql "$PSQL_URL" -q <<'SQL'
+psql "$PSQL_DIRECT" -q <<'SQL'
 DO $$
 DECLARE t text;
 BEGIN
@@ -117,10 +163,27 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA kraal TO kraal_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA kraal TO kraal_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA kraal FROM anon, authenticated;
 SQL
-UNPROTECTED=$(psql "$PSQL_URL" -tAc \
+UNPROTECTED=$(psql "$PSQL_DIRECT" -tAc \
   "SELECT count(*) FROM pg_tables WHERE schemaname='kraal' AND NOT rowsecurity")
 [[ "$UNPROTECTED" == "0" ]] || fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
-echo "✓ RLS forced on every kraal table; kraal_app policy refreshed" 
+echo "✓ RLS forced on every kraal table; kraal_app policy refreshed"
+
+# The most dangerous silent failure in this deployment: kraal_app connecting
+# with a default search_path, so every unqualified query lands in public — on
+# top of the unrelated application living there. Nothing errors; it just writes
+# to the wrong database. Ask the runtime connection itself, through the same
+# pooler the worker uses, rather than trusting that the role was configured.
+RUNTIME_PATH=$(psql "$PSQL_RUNTIME" -tAc 'SHOW search_path')
+[[ "$RUNTIME_PATH" == *kraal* ]] || fail "The runtime connection's search_path is \"$RUNTIME_PATH\" — no kraal.
+
+  Unqualified queries would resolve against public, where another application
+  lives. Fix it server-side (per-connection settings do not survive the pooler,
+  and the adapter's schema option does nothing):
+
+    ALTER ROLE kraal_app SET search_path = kraal, extensions;
+
+  Then re-run. Refusing to deploy against the wrong schema."
+echo "✓ runtime search_path resolves to kraal ($RUNTIME_PATH)"
 
 step "3/7 Seed (zones + optional test admin)"
 node prisma/seed.mjs
