@@ -45,9 +45,10 @@ storage are the remaining blockers to it being usable by a real farmer.
 | Phone-OTP auth + sessions | ✅ `src/services/auth-service.ts` |
 | Server-side capability gates | ✅ `src/lib/session.ts` |
 | Sign-in / verify pages | ✅ `src/app/signin/`, `src/app/verify/` |
-| Photo storage, BullMQ queue | ⬜ Not started |
+| Photo upload, EXIF handling, storage | ✅ `src/services/photo-service.ts` |
+| BullMQ queue, SMS gateway | ⬜ Not started |
 
-155 unit tests + 52 integration tests, all passing.
+175 unit tests + 52 integration tests, all passing.
 
 ```bash
 npm install
@@ -108,15 +109,30 @@ for a 6-digit code. See `.env.example`.
 openssl rand -base64 32
 ```
 
-## Not yet safe to deploy
+## Photos
 
-Photo uploads are unwired — the publish route generates placeholder URLs so the
-three-photo rule stays enforced rather than silently skipped. Real object
-storage is the remaining gap before a farmer can actually list an animal.
+Uploads are validated from their own bytes, never the declared content type or
+extension — a `.jpg` that is actually HTML becomes stored XSS on a CDN that
+trusts the name. Only JPEG, PNG and WebP pass.
+
+EXIF is read and then removed, which sounds contradictory but is the point.
+Capture coordinates and time are kept server-side as fraud signals (§8.3),
+while the bytes that get stored and served carry no metadata at all — a photo
+with GPS intact publishes the exact location of a cattle post, and stock theft
+is the dominant fraud in this market (§4.3).
+
+Storage keys are random rather than sequential, so one photo URL does not let
+anyone enumerate every other listing's photos.
+
+## Not yet safe to deploy
 
 SMS currently goes to the server log via `consoleSmsSender`. Wire a real
 gateway (Africa's Talking) before any public deployment, or codes will be
 visible in logs and invisible to users.
+
+Alert fan-out still runs inline in the publish request. It is fine at low
+volume but belongs on a queue before launch — a farmer on 2G should not wait
+for a sweep across every alert profile.
 
 ## Before this takes real money
 
@@ -146,6 +162,7 @@ src/domain/
   zones/                  Movement feasibility between disease-control zones
   matching/               Alert scoring and delivery decisions
   auth/                   OTP policy: rate limits, attempt caps, phone format
+  media/                  Upload validation: magic bytes, size, storage keys
 src/db/                   Prisma client, ledger persistence
 src/services/             Listing publication, transactions, match fan-out
 src/i18n/                 Setswana and English catalogue

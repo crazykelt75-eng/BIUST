@@ -4,6 +4,7 @@ import { prisma } from '../../../db/client';
 import { requireCapability, toErrorResponse } from '../../../lib/session';
 import { ListingError, publishListing } from '../../../services/listing-service';
 import { fanOutListing } from '../../../services/match-worker';
+import { PhotoError, assessPhotos, storeListingPhotos } from '../../../services/photo-service';
 
 /**
  * Publish a listing.
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   let payload: unknown;
-  let photoCount = 0;
+  let files: File[] = [];
 
   try {
     const form = await request.formData();
@@ -35,25 +36,48 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Missing listing data' }, { status: 400 });
     }
     payload = JSON.parse(raw);
-    photoCount = form.getAll('photos').length;
+    files = form.getAll('photos').filter((f): f is File => f instanceof File);
   } catch {
     return NextResponse.json({ message: 'Could not read the submission' }, { status: 400 });
   }
 
-  // TODO(storage): upload the photo blobs to object storage and pass the URLs
-  // through. Placeholders keep the validation contract honest in the meantime —
-  // the schema requires at least three, and that rule is enforced here rather
-  // than being quietly skipped while storage is unwired.
-  const photoUrls = Array.from(
-    { length: photoCount },
-    (_, i) => `https://placeholder.kraal.bw/pending/${i}.webp`,
-  );
+  // Validated from their own bytes, EXIF read for fraud signals, then stripped
+  // so a published photo cannot geolocate the farm (§4.3, §8.3).
+  let photos;
+  try {
+    photos = await storeListingPhotos(files, { sellerId });
+  } catch (error) {
+    if (error instanceof PhotoError) {
+      return NextResponse.json(
+        { message: error.message, code: error.reason, photoIndex: error.index },
+        { status: error.reason === 'STORAGE_FAILED' ? 502 : 400 },
+      );
+    }
+    throw error;
+  }
+
+  const photoUrls = photos.map((photo) => photo.url);
 
   try {
     const result = await publishListing(prisma, {
       sellerId,
       input: { ...(payload as Record<string, unknown>), photoUrls },
     });
+
+    // Capture-location and staleness signals, recorded against the listing for
+    // the trust queue rather than shown to anyone.
+    const suspicion = assessPhotos(photos, null);
+    if (suspicion.locationMismatchKm !== undefined) {
+      await prisma.fraudFlag.create({
+        data: {
+          kind: 'EXIF_LOCATION_MISMATCH',
+          severity: 'SOFT',
+          userId: sellerId,
+          listingId: result.listingId,
+          detail: `Photo captured ${Math.round(suspicion.locationMismatchKm)} km from the farm`,
+        },
+      });
+    }
 
     // Fan-out belongs on a queue (BullMQ) rather than in the request. A farmer
     // on 2G must not wait for a match sweep across every alert profile.

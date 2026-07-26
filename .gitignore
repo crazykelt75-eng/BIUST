@@ -21,3 +21,4 @@ prisma/generated/
 
 # Next build output
 .next/
+.uploads/
