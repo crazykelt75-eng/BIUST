@@ -48,14 +48,18 @@ step() { echo; echo "━━ $1"; }
 
 npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: npx wrangler login"
 
+# psql speaks libpq, which rejects Prisma's ?schema= parameter outright. Strip
+# it for psql; Prisma keeps the full URL.
+PSQL_URL="$(printf '%s' "$DIRECT_URL" | sed -e 's/?schema=kraal&/?/' -e 's/[?&]schema=kraal//')"
+
 step "1/7 PostGIS + migrations (direct connection)"
-psql "$DIRECT_URL" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
+psql "$PSQL_URL" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
 npx prisma migrate deploy
 
 step "2/7 Deny-all RLS on the kraal schema"
 # Scoped STRICTLY to the kraal schema. This database is shared with another
 # application in public; the public-scoped rls_deny_all.sql must NEVER run here.
-psql "$DIRECT_URL" -q <<'SQL'
+psql "$PSQL_URL" -q <<'SQL'
 DO $$
 DECLARE t text;
 BEGIN
@@ -70,7 +74,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA kraal TO kraal_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA kraal TO kraal_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA kraal FROM anon, authenticated;
 SQL
-UNPROTECTED=$(psql "$DIRECT_URL" -tAc \
+UNPROTECTED=$(psql "$PSQL_URL" -tAc \
   "SELECT count(*) FROM pg_tables WHERE schemaname='kraal' AND NOT rowsecurity")
 [[ "$UNPROTECTED" == "0" ]] || fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
 echo "✓ RLS forced on every kraal table; kraal_app policy refreshed" 
