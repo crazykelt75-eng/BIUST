@@ -99,8 +99,31 @@ PSQL_RUNTIME="$(psql_url "$DATABASE_URL")"
 problem() { echo "✗ $1" >&2; }
 
 preflight() {
-  local name="$1" url="$2" role err
-  err="$(psql "$url" -qc 'SELECT 1' 2>&1 >/dev/null)" && { echo "✓ $name connects"; return 0; }
+  local name="$1" url="$2" role err attempt=0 max=5
+
+  # Supabase's pooler caches each role's credentials, so a connection made
+  # seconds after ALTER ROLE can still be checked against the old password and
+  # rejected. That is indistinguishable from a genuinely wrong password on the
+  # first attempt, and it is the difference between two consecutive deploys
+  # disagreeing about the same credential. Retry the auth failures; everything
+  # else fails immediately, because no amount of waiting fixes a bad hostname.
+  while :; do
+    if err="$(psql "$url" -qc 'SELECT 1' 2>&1 >/dev/null)"; then
+      [[ "$attempt" == "0" ]] && echo "✓ $name connects" \
+                              || echo "✓ $name connects (after ${attempt} retries — stale pooler credentials)"
+      return 0
+    fi
+    case "$err" in
+      *"password authentication failed"*|*"Tenant or user not found"*)
+        attempt=$((attempt + 1))
+        if [[ "$attempt" -lt "$max" ]]; then
+          echo "  … $name rejected, retrying in 8s [${attempt}/$((max - 1))]"
+          sleep 8
+          continue
+        fi ;;
+    esac
+    break
+  done
 
   # Surface what psql actually said — an earlier version swallowed it and left
   # "cannot reach the database" with no cause, which is nearly useless.
@@ -139,7 +162,8 @@ preflight() {
         hint="  '$role' is created without a usable password. Set one, once, in the
   Supabase SQL editor:  ALTER ROLE $role PASSWORD '...';"
       fi
-      problem "The database rejected $name's password (role: $role).
+      problem "The database rejected $name's password (role: $role), and still did
+  after $((max - 1)) retries — so this is not the pooler serving a stale credential.
 
 $hint
 
