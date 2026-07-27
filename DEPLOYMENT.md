@@ -12,11 +12,20 @@ append-only + ledger triggers installed and verified live, deny-all RLS forced
 on all 30 tables, zones + test admin (+26771000000) seeded, and the other
 application in `public` untouched.
 
-The app connects as the dedicated `kraal_app` role. Its **role-level
-search_path** routes unqualified queries into the kraal schema server-side —
-per-connection parameters do not survive the transaction pooler, and the
-adapter's schema option was tested and does nothing. The role has least
-privilege (nothing in `public`) and an explicit RLS allow policy per table.
+The app connects as the dedicated `kraal_app` role, which has least privilege
+(nothing in `public`) and an explicit RLS allow policy per table.
+
+Reaching the `kraal` schema takes **two** settings, covering different traffic:
+
+| | Covers | Why the other one cannot do it |
+|---|---|---|
+| `kraal_app`'s role-level `search_path` | raw SQL | Set server-side on the role, so it survives the transaction pooler — a per-session `SET` would not. |
+| The adapter's `schema` option (`DB_SCHEMA`) | Prisma model queries | Prisma schema-qualifies these explicitly and defaults to `public`, whatever the search_path says. |
+
+With only the first, `SELECT * FROM zones` works while `prisma.zone.findMany()`
+returns P2021 on the same connection. `deploy.sh` derives `DB_SCHEMA` from
+`DIRECT_URL` and pushes it as a worker secret. Note the option belongs in
+`PrismaPg`'s **second** argument; in the pool config it is silently ignored.
 
 Remaining, on a machine with `wrangler login`:
 

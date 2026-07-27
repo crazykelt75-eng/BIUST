@@ -15,10 +15,17 @@
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
-// Against Supabase, connect as kraal_app — its role-level search_path routes
-// unqualified queries into the kraal schema. Locally the default role +
-// public schema are used unchanged.
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+// Against Supabase, Kraal lives in the `kraal` schema. The role's server-side
+// search_path covers raw SQL, but Prisma's model queries are schema-qualified
+// explicitly and default to `public` regardless — so the schema has to be
+// named here too, in the adapter's SECOND argument. See src/db/client.ts.
+// Locally this resolves to undefined and `public` is used unchanged.
+const connectionString = process.env.DATABASE_URL;
+const schema =
+  process.env.DB_SCHEMA?.trim() ||
+  /[?&]schema=([^&]+)/.exec(connectionString ?? '')?.[1];
+
+const adapter = new PrismaPg({ connectionString }, { schema: schema ? decodeURIComponent(schema) : undefined });
 const prisma = new PrismaClient({ adapter });
 
 // Botswana's veterinary disease-control zones, simplified to the ones the

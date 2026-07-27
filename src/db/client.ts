@@ -27,28 +27,55 @@ import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
+/**
+ * Which schema Prisma should address.
+ *
+ * On Supabase, Kraal lives in the `kraal` schema, isolated from an unrelated
+ * application in `public`. Getting this wrong does not fail loudly — it points
+ * a working application at the wrong half of a shared database.
+ *
+ * Two mechanisms are needed and they are NOT interchangeable:
+ *
+ *   - The `kraal_app` role carries a server-side `search_path`, which resolves
+ *     unqualified names in RAW SQL (src/db/spatial.ts). It survives the
+ *     transaction pooler because it is attached to the role, not the session.
+ *
+ *   - This option, which is what Prisma's generated model queries use. Prisma
+ *     schema-qualifies them explicitly and defaults to `public`, so no
+ *     search_path can influence them. Without it, `prisma.zone.findMany()`
+ *     asks for `public.zones` and fails with P2021 even though a raw
+ *     `SELECT * FROM zones` on the very same connection succeeds.
+ *
+ * Note it belongs in the adapter's SECOND argument. Passing it inside the pool
+ * config is silently ignored — the mistake reads as "the option does nothing".
+ *
+ * Locally there is no separate schema and this returns undefined, leaving
+ * Prisma on `public` as before.
+ */
+export function resolveSchema(connectionString: string): string | undefined {
+  const explicit = process.env.DB_SCHEMA?.trim();
+  if (explicit) return explicit;
+  const fromUrl = /[?&]schema=([^&]+)/.exec(connectionString)?.[1];
+  return fromUrl ? decodeURIComponent(fromUrl) : undefined;
+}
+
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set');
   }
 
-  const adapter = new PrismaPg({
-    connectionString,
-    // The pooler holds the real pool; a large client-side pool on top of it
-    // just queues in a second place. One connection per isolate is right.
-    max: Number(process.env.DATABASE_POOL_MAX ?? 1),
-    // Fail fast rather than hanging a request that a user is waiting on.
-    connectionTimeoutMillis: 10_000,
-  });
-
-  // Schema note: on Supabase, Kraal lives in the `kraal` schema, isolated from
-  // the unrelated app in `public`. That is NOT configured here — the adapter's
-  // schema option demonstrably does not set the search_path, and per-connection
-  // startup parameters do not survive the transaction pooler. Instead the app
-  // connects as the `kraal_app` role, whose role-level `SET search_path =
-  // kraal, extensions` is applied server-side on every connection, through any
-  // pooler. Locally, the default role and `public` schema are used unchanged.
+  const adapter = new PrismaPg(
+    {
+      connectionString,
+      // The pooler holds the real pool; a large client-side pool on top of it
+      // just queues in a second place. One connection per isolate is right.
+      max: Number(process.env.DATABASE_POOL_MAX ?? 1),
+      // Fail fast rather than hanging a request that a user is waiting on.
+      connectionTimeoutMillis: 10_000,
+    },
+    { schema: resolveSchema(connectionString) },
+  );
 
   return new PrismaClient({
     adapter,

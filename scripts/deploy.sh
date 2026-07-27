@@ -46,6 +46,14 @@ step() { echo; echo "━━ $1"; }
 [[ "$DIRECT_URL" == *schema=kraal* ]] || fail "DIRECT_URL must include ?schema=kraal (shared database — see .deploy.env.example)"
 [[ "$DATABASE_URL" == *kraal_app* ]] || echo "⚠ DATABASE_URL does not use the kraal_app role — runtime queries will not resolve the kraal schema"
 
+# Which schema Prisma addresses. The role's server-side search_path covers raw
+# SQL only; Prisma's model queries are schema-qualified explicitly and default
+# to `public` whatever the search_path says. DIRECT_URL is the source of truth
+# because ?schema= is mandatory there and already validated above.
+DB_SCHEMA="$(sed -n 's/.*[?&]schema=\([^&]*\).*/\1/p' <<<"$DIRECT_URL")"
+export DB_SCHEMA
+[[ -n "$DB_SCHEMA" ]] || fail "Could not read the schema from DIRECT_URL"
+
 npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: npx wrangler login"
 
 # psql speaks libpq, which rejects Prisma's query parameters outright — it errors
@@ -326,6 +334,9 @@ put() { printf '%s' "$2" | npx wrangler secret put "$1" > /dev/null && echo "  �
 put DATABASE_URL "$DATABASE_URL"
 put DIRECT_URL   "$DIRECT_URL"
 put OTP_PEPPER   "$OTP_PEPPER"
+# Without this the worker's model queries address `public` — the other
+# application's schema — and fail with P2021 on every request.
+put DB_SCHEMA    "$DB_SCHEMA"
 
 if [[ -n "${S3_ENDPOINT:-}" ]]; then
   put S3_ENDPOINT "$S3_ENDPOINT"; put S3_BUCKET "$S3_BUCKET"

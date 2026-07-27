@@ -125,10 +125,28 @@ Each of these looks wrong until you know why. All are load-bearing.
     `src/workers/queue-consumer.ts`. With no binding, fan-out runs inline —
     correct at test volume.
 
-13. **The Prisma adapter's `schema` option does nothing.** Tested directly: it
-    does not set `search_path`, and per-connection parameters do not survive
-    Supabase's transaction pooler. Schema routing is done by the `kraal_app`
-    role's server-side `SET search_path`. See §4.
+13. **Schema routing needs BOTH mechanisms, and they are not interchangeable.**
+    An earlier version of this document claimed the adapter's `schema` option
+    "does nothing". That was wrong, and the error was in how it was passed: it
+    belongs in `PrismaPg`'s **second** argument, and inside the pool config it
+    is silently ignored. Both are needed:
+
+    - `kraal_app`'s **server-side `search_path`** resolves unqualified names in
+      **raw SQL** (`src/db/spatial.ts`). It survives the transaction pooler
+      because it is attached to the role, not the session.
+    - The **adapter's `schema` option** is what Prisma's **model queries** use.
+      Prisma schema-qualifies those explicitly and defaults to `public`, so no
+      `search_path` can reach them.
+
+    The failure mode when the second is missing is instructive: a raw
+    `SELECT * FROM zones` succeeds while `prisma.zone.findMany()` returns P2021
+    TableDoesNotExist — on the same connection, in the same request. Deploy run
+    10 hit exactly this on the seed. Regression tests in
+    `src/db/schema-resolution.test.ts`; the value reaches the worker as the
+    `DB_SCHEMA` secret, which `deploy.sh` derives from `DIRECT_URL`.
+
+    Getting this wrong does not raise an error in production — it points a
+    healthy-looking application at `public`, where another application lives.
 
 ---
 
