@@ -122,7 +122,11 @@ preflight() {
       return 0
     fi
     case "$err" in
-      *"password authentication failed"*|*"Tenant or user not found"*)
+      # The third of these is Supavisor rejecting its OWN cached pool after the
+      # role's password changed underneath it. It says so, and it recovers on
+      # reconnection — but the wording shares nothing with the other two, so it
+      # has to be matched separately.
+      *"password authentication failed"*|*"Tenant or user not found"*|*"Authentication credentials are invalid"*)
         attempt=$((attempt + 1))
         if [[ "$attempt" -lt "$max" ]]; then
           echo "  … $name rejected, retrying in 8s [${attempt}/$((max - 1))]"
@@ -190,10 +194,26 @@ $hint
   esac
 }
 
+# Credential repair, attempted only when something is actually broken.
+#
+# This used to run unconditionally, before every deploy, and that was the cause
+# of its own failures: ALTER ROLE invalidates the pooler's cached credentials,
+# so "fixing" a password that was already correct made the next connection fail
+# with exactly the error the repair exists to prevent. Repair on failure, not
+# on principle.
+repair() {
+  [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]] || return 1
+  echo "→ attempting repair through the Supabase API"
+  python3 scripts/db-bootstrap.py
+}
+
 # DATABASE_URL is what the application runs on. Without it there is nothing to
 # deploy, so its failure is fatal.
-preflight DATABASE_URL "$PSQL_RUNTIME" \
-  || fail "DATABASE_URL is unusable — the application cannot run without it. Nothing was changed."
+if ! preflight DATABASE_URL "$PSQL_RUNTIME"; then
+  repair || fail "DATABASE_URL is unusable — the application cannot run without it. Nothing was changed."
+  preflight DATABASE_URL "$PSQL_RUNTIME" \
+    || fail "DATABASE_URL is still unusable after repair. Nothing was changed."
+fi
 
 # DIRECT_URL is only ever used for schema administration: creating the
 # extension, applying migrations, forcing RLS. All three need privileges the
@@ -300,6 +320,9 @@ echo "✓ RLS on every kraal table ($([[ "$DB_ADMIN" == "1" ]] && echo "forced a
 # to the wrong database. Ask the runtime connection itself, through the same
 # pooler the worker uses, rather than trusting that the role was configured.
 RUNTIME_PATH=$(psql "$PSQL_RUNTIME" -tAc 'SHOW search_path')
+if [[ "$RUNTIME_PATH" != *kraal* ]] && repair; then
+  RUNTIME_PATH=$(psql "$PSQL_RUNTIME" -tAc 'SHOW search_path')
+fi
 [[ "$RUNTIME_PATH" == *kraal* ]] || fail "The runtime connection's search_path is \"$RUNTIME_PATH\" — no kraal.
 
   Unqualified queries would resolve against public, where another application

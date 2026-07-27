@@ -55,20 +55,13 @@ jobs:
       - name: Ensure psql is present
         run: command -v psql || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
 
-      # Makes the database roles agree with the connection strings before
-      # anything tries to use them. A no-op without SUPABASE_ACCESS_TOKEN, and
-      # a no-op when the passwords already match. It runs through Supabase's
-      # Management API because the credentials being repaired are the same ones
-      # a database connection would need.
-      - name: Align database roles with the connection strings
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
-        run: python3 scripts/db-bootstrap.py
-
+      # scripts/db-bootstrap.py is NOT run here. deploy.sh invokes it only when
+      # a connection actually fails: ALTER ROLE invalidates the pooler's cached
+      # credentials, so repairing a password that was already correct provokes
+      # the failure the repair is meant to prevent.
       - name: Deploy
         env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
           OTP_PEPPER: ${{ secrets.OTP_PEPPER }}
