@@ -4,7 +4,18 @@ Written for whoever (or whatever) picks this up cold. Read this first, then
 `MASTER_PROMPT.md` for the product, `DEPLOYMENT.md` for infrastructure,
 `LIVE_TESTING.md` for walking the app.
 
-**Last updated:** 2026-07-26, during the first live deploy attempt.
+**Last updated:** 2026-07-27. **The app is deployed and serving:**
+<https://kraal.crazykelt75.workers.dev>
+
+Verified live, not merely deployed: the home page returns 200, an
+unauthenticated publish is rejected with 401, and requesting an OTP writes a
+row to `otp_challenges` — which exercises the worker's database connection,
+the schema routing and RLS in a single request.
+
+Two things are deliberately not working yet, both requiring an account rather
+than code: **photo upload** (R2 is not enabled, and Workers have no disk) and
+**real SMS** (Africa's Talking is not wired, so OTP codes go to the worker log
+— `npx wrangler tail kraal --format pretty`).
 
 ---
 
@@ -245,7 +256,22 @@ optionally `CLOUDFLARE_ACCOUNT_ID`.
 | 30221535961 | ❌ `psql: invalid URI query parameter: "schema"` — psql cannot take Prisma's `?schema=`. Fixed: script strips it into `PSQL_URL`. |
 | 30222276887 | ❌ `Network is unreachable` on `db.<ref>.supabase.co:5432` — IPv6-only host, no IPv6 on GitHub runners. Fixed: `DIRECT_URL` must use the **session pooler**; script now preflights and diagnoses. Needs the user to update the `DIRECT_URL` secret. |
 | 30222628106 | ❌ `FATAL: password authentication failed for user "postgres"`. Host resolved and connected — the IPv6 problem was solved. The pooler is multi-tenant and **routes on the username**, which must be `postgres.<project-ref>`; plain `postgres` matches no tenant and is reported as a password failure. Fixed by updating the secret; script now checks both URLs' usernames before connecting. |
-| (next) | **Check this first.** |
+| 30225005721 | ❌ Same message, but the username was now correct. The pooler reports the **bare** role name even for a tenant-qualified login, so a wrong password and a missing suffix read identically. `postgres` takes the *project database password* from the dashboard, which no `ALTER ROLE` reaches. |
+| 30225832920 | ❌ `HTTP 403, error code 1010` from the role bootstrap — **Cloudflare**, not Supabase, rejecting urllib's default user agent before the request reached the API. |
+| 30225987809 | ❌ `permission denied to alter role — only superusers can alter privileged roles`. Supabase's `postgres` is not a superuser and cannot alter itself. Its password is dashboard-only, by design. Reserved roles are now attempted, reported, and stepped over. |
+| 30226200680 | ❌ `DATABASE_URL` ✓ (bootstrap set `kraal_app`), `DIRECT_URL` ✗. Prompted the verify-only mode below: schema admin became assertions instead of actions. |
+| 30226488820 | ❌ `P2021 TableDoesNotExist` on the seed — Prisma addressing `public`. See decision 13. |
+| 30227302615 | ❌ `Authentication credentials are invalid… reconnect with fresh credentials` — Supavisor rejecting its own cached pool, because the bootstrap reset a password that was already correct. Repair now runs only on failure. |
+| 30227637897 | ⚠️ **Deployed and live**, then reported failure: an unguarded `grep` with no match ended the script under `set -e`. |
+| 30228026011 | ❌ First honest smoke run: home page 500, OTP `error.generic`. Both query the database; the passing 401 does not. |
+| 30228416175 | ❌ Log capture found it: `[unenv] fs.readFileSync is not implemented yet`. |
+| 30242382498 | ❌ `fs.readFile` — webpack's `asyncWebAssembly` loads its chunk from disk too. |
+| 30243175723 | ✅ **All three smoke checks passed.** Live at https://kraal.crazykelt75.workers.dev |
+
+Sixteen runs. Every failure was infrastructure or platform integration; none was
+domain logic. The two that mattered most were the ones that *looked* fine:
+run 30227637897 deployed a working app and reported failure, and every run
+before 30228026011 would have reported success while broken.
 
 Four failures, four different pieces of infrastructure plumbing — libpq
 parameter handling, IPv6, a swallowed diagnostic, the pooler username. None was
