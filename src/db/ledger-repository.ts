@@ -8,7 +8,8 @@
  * impossible for its callers (MASTER_PROMPT §10.1).
  */
 
-import { Prisma } from '@prisma/client';
+// See prisma-client.ts — importing '@prisma/client' directly breaks on Workers.
+import { Prisma } from './prisma-client';
 
 import type { Tx } from './client';
 import { accountKey, fundClassOf } from '../domain/ledger/accounts';

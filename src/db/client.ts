@@ -1,5 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
+// Not '@prisma/client' directly: on Workers that client loads its WASM query
+// compiler from disk and fails at query time. See prisma-client.ts.
+import { PrismaClient } from './prisma-client';
 
 /**
  * Prisma client.

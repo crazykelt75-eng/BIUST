@@ -8,6 +8,7 @@
 //   - transaction_events, journal_* and audit_log are APPEND-ONLY. No updates, no deletes.
 //     This is enforced by DB triggers in the migration, not merely by convention.
 
+// Node client — the seed, integration tests, and anything run with `node`.
 generator client {
   provider = "prisma-client-js"
   // queryCompiler replaces the Rust query engine with a WASM/TS one, so no
@@ -16,6 +17,27 @@ generator client {
   // on Workers and on its own exceeds the worker size limit.
   // Both driverAdapters and queryCompiler are GA in Prisma 6.19 and no longer
   // need to be named as preview features.
+  engineType      = "client"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// Workers client. The generator above loads its WASM query compiler with
+// fs.readFileSync, which cannot work where there is no filesystem — on
+// Cloudflare it fails at query time with "[unenv] fs.readFileSync is not
+// implemented yet", long after a build that looked entirely healthy.
+//
+// This generator emits a client that imports the .wasm as a module instead,
+// which Wrangler bundles natively. It is aliased in over `@prisma/client` at
+// bundle time (see wrangler.jsonc), so application source keeps one import
+// path and Node keeps the client above.
+generator workersClient {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  runtime         = "workerd"
+  moduleFormat    = "esm"
+  // Same reason as above: the query compiler is WASM, the alternative is a
+  // ~17 MB native engine that cannot execute on Workers and alone exceeds the
+  // worker size limit.
   engineType      = "client"
   previewFeatures = ["postgresqlExtensions"]
 }

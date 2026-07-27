@@ -18,7 +18,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:all": "npm run test && npm run test:integration",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
-    "cf:build": "opennextjs-cloudflare build",
+    "cf:build": "prisma generate && CF_WORKERS=1 opennextjs-cloudflare build",
     "cf:preview": "opennextjs-cloudflare preview",
     "cf:deploy": "opennextjs-cloudflare deploy",
     "db:rls": "psql \"$DIRECT_URL\" -f prisma/sql/rls_deny_all.sql",

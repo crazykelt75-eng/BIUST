@@ -26,3 +26,6 @@ prisma/generated/
 .wrangler/
 public/uploads/
 .deploy.env
+
+# Prisma clients are generated at build time (see prisma/schema.prisma)
+src/generated/
