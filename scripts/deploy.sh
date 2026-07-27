@@ -381,15 +381,46 @@ fi
 
 step "7/7 Smoke checks"
 [[ -n "$URL" ]] || { echo "⚠ Could not detect the URL; run the checks from DEPLOYMENT.md §7"; exit 0; }
-sleep 3
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/listings")
-[[ "$CODE" == "401" ]] && echo "✓ unauthenticated publish → 401" || echo "✗ expected 401, got $CODE"
-LANG_TAG=$(curl -s "$URL/" | grep -oE '<html lang="[a-z]+"' | head -1)
-echo "✓ home page serves ($LANG_TAG)"
-CHALLENGE=$(curl -s -X POST "$URL/api/auth/request-code" -H 'content-type: application/json' -d '{"phone":"71234567"}')
-echo "$CHALLENGE" | grep -q challengeId && echo "✓ OTP flow reachable" || echo "✗ OTP request failed: $CHALLENGE"
+
+# Every command here is guarded. An unguarded `grep` with no match returns 1,
+# and under `set -e` that ends the script mid-verification — which reads in the
+# log exactly like a failed deploy, on a deploy that in fact succeeded.
+SMOKE_FAILURES=0
+expect() { # expect <what> <wanted> <got>
+  if [[ "$3" == "$2" ]]; then
+    echo "  ✓ $1"
+  else
+    echo "  ✗ $1 — expected $2, got $3"
+    SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
+  fi
+}
+
+sleep 5   # a new version takes a moment to start serving
+
+expect "home page serves" 200 \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$URL/" || echo 000)"
+expect "unauthenticated publish is rejected" 401 \
+  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/listings" || echo 000)"
+
+# The one that proves the whole stack. Requesting a code writes an
+# otp_challenges row, so a success here means the worker reached the database,
+# addressed the right schema, and satisfied RLS — the three things that cannot
+# be confirmed from the build alone.
+CHALLENGE=$(curl -s -X POST "$URL/api/auth/request-code" \
+  -H 'content-type: application/json' -d '{"phone":"71234567"}' || true)
+if grep -q challengeId <<<"$CHALLENGE"; then
+  echo "  ✓ OTP request reached the database and wrote a challenge"
+else
+  echo "  ✗ OTP request failed: ${CHALLENGE:0:400}"
+  SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
+fi
 
 echo
+[[ "$SMOKE_FAILURES" == "0" ]] || fail "$SMOKE_FAILURES smoke check(s) failed.
+  The worker is deployed at $URL but is not serving correctly. It was
+  previously possible for this to print ✗ and still exit 0 — a deploy that
+  reports success while broken is worse than one that fails."
+
 echo "Live at: $URL"
 echo "OTP codes (test mode): npx wrangler tail kraal --format pretty"
 echo "Tester guide: LIVE_TESTING.md"
