@@ -45,16 +45,38 @@ const nextConfig = {
         ),
       };
 
-      // The Workers client does `import("./query_compiler_bg.wasm?module")`.
-      // Webpack 5 does not handle WebAssembly without being asked, and the
-      // `?module` suffix is a Cloudflare convention it has never heard of, so
-      // it tries to parse two megabytes of WASM as JavaScript and fails at
-      // the first byte.
-      config.experiments = { ...config.experiments, asyncWebAssembly: true };
-      config.module.rules.push({
-        test: /\.wasm$/,
-        type: 'webassembly/async',
-      });
+      // The Workers client does `import("./query_compiler_bg.wasm?module")`,
+      // which must reach Wrangler untouched — it is the only bundler in this
+      // chain that understands WebAssembly on Workers.
+      //
+      // Webpack must not handle it, and there are two wrong ways to discover
+      // that. Left alone it parses two megabytes of WASM as JavaScript and
+      // dies on the first byte. With `asyncWebAssembly` it emits the WASM as
+      // an async chunk and loads that chunk with fs.readFile, because Next's
+      // server build targets Node — which fails on Workers exactly like the
+      // readFileSync it replaced, one step further along.
+      //
+      // So: declare it external and let it through.
+      //
+      // It is rewritten to one absolute path rather than left relative.
+      // Webpack resolves the relative form against each route's own output
+      // directory, producing nineteen distinct specifiers for one file —
+      // which Wrangler would faithfully inline as nineteen copies of two
+      // megabytes, well past the worker size limit. Every route now imports
+      // the same file, so the bundle carries it once.
+      const queryCompilerWasm = path.resolve(
+        here,
+        'src/generated/prisma/internal/query_compiler_bg.wasm',
+      );
+      config.externals = [
+        ...(Array.isArray(config.externals)
+          ? config.externals
+          : [config.externals].filter(Boolean)),
+        ({ request }, callback) =>
+          request?.endsWith('.wasm?module')
+            ? callback(null, `module ${queryCompilerWasm}?module`)
+            : callback(),
+      ];
     }
     return config;
   },

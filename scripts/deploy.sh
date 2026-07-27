@@ -342,6 +342,22 @@ npm run cf:build
 BINARIES=$(find .open-next -name '*.node' | wc -l)
 [[ "$BINARIES" == "0" ]] || fail "Native binaries in the bundle — engineType=client regressed"
 
+# Prisma must load its query compiler as a WASM module, not off a filesystem
+# the Workers runtime does not have. Both wrong ways build and deploy cleanly
+# and fail on every database request afterwards, so check the bundle rather
+# than waiting for the smoke tests to find it.
+HANDLER=.open-next/server-functions/default/handler.mjs
+if [[ -f "$HANDLER" ]]; then
+  grep -q 'queryCompilerWasmFilePath' "$HANDLER" && fail "The bundle loads Prisma's query compiler from disk.
+  Workers have no filesystem; every database request will fail with
+  '[unenv] fs.readFileSync is not implemented yet'. The Workers client alias in
+  next.config.mjs has regressed — check CF_WORKERS is set and that
+  src/db/prisma-client.ts is the import path used."
+  WASM_IMPORTS=$(grep -o 'query_compiler_bg\.wasm?module' "$HANDLER" | wc -l)
+  [[ "$WASM_IMPORTS" -gt 0 ]] || fail "No WASM query-compiler import in the bundle — the Workers Prisma client is not being used."
+  echo "✓ Prisma query compiler bundled as WASM ($WASM_IMPORTS import sites, one file)"
+fi
+
 step "5/7 Deploy"
 DEPLOY_OUT=$(npx wrangler deploy 2>&1) || { echo "$DEPLOY_OUT"; fail "wrangler deploy failed"; }
 echo "$DEPLOY_OUT" | tail -3
