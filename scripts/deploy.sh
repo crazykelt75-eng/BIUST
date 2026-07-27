@@ -415,6 +415,28 @@ else
   SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
 fi
 
+# When a check fails, the useful information is inside the worker, and the
+# response deliberately does not carry it — `error.generic` is what a user
+# should see, not what a deploy log should have to work from. Attach to the
+# live log stream and reissue the failing requests, so the actual exception
+# lands in CI rather than requiring someone to reproduce it by hand.
+if [[ "$SMOKE_FAILURES" != "0" ]]; then
+  echo
+  echo "━━ Capturing worker logs for the failing requests"
+  npx wrangler tail kraal --format pretty > /tmp/kraal-tail.log 2>&1 &
+  TAIL_PID=$!
+  sleep 8   # tail takes a few seconds to attach; requests before that are lost
+  curl -s -o /dev/null "$URL/" || true
+  curl -s -o /dev/null -X POST "$URL/api/auth/request-code" \
+    -H 'content-type: application/json' -d '{"phone":"71234567"}' || true
+  sleep 8
+  kill "$TAIL_PID" 2>/dev/null || true
+  wait "$TAIL_PID" 2>/dev/null || true
+  echo "───── worker log ─────"
+  tail -80 /tmp/kraal-tail.log 2>/dev/null || echo "(no log captured)"
+  echo "───── end worker log ─────"
+fi
+
 echo
 [[ "$SMOKE_FAILURES" == "0" ]] || fail "$SMOKE_FAILURES smoke check(s) failed.
   The worker is deployed at $URL but is not serving correctly. It was
