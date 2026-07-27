@@ -96,8 +96,7 @@ PSQL_RUNTIME="$(psql_url "$DATABASE_URL")"
 # Supabase's direct host (db.<ref>.supabase.co) resolves to IPv6 ONLY, and most
 # CI runners — GitHub Actions included — have no IPv6 route. Diagnose it here
 # rather than leaving a bare "Network is unreachable".
-PREFLIGHT_PROBLEMS=0
-problem() { echo "✗ $1" >&2; PREFLIGHT_PROBLEMS=$((PREFLIGHT_PROBLEMS + 1)); }
+problem() { echo "✗ $1" >&2; }
 
 preflight() {
   local name="$1" url="$2" role err
@@ -159,21 +158,73 @@ $hint
   esac
 }
 
-# Test both even when the first fails. Stopping at the first broken credential
-# hides the second one until the next run, and each run costs a round trip
-# through someone editing a secret in a browser.
-preflight DIRECT_URL   "$PSQL_DIRECT" || true
-preflight DATABASE_URL "$PSQL_RUNTIME" || true
-[[ "$PREFLIGHT_PROBLEMS" == "0" ]] || fail "$PREFLIGHT_PROBLEMS connection string(s) unusable — see above. Nothing was changed."
+# DATABASE_URL is what the application runs on. Without it there is nothing to
+# deploy, so its failure is fatal.
+preflight DATABASE_URL "$PSQL_RUNTIME" \
+  || fail "DATABASE_URL is unusable — the application cannot run without it. Nothing was changed."
 
-step "1/7 PostGIS + migrations (direct connection)"
-psql "$PSQL_DIRECT" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
-npx prisma migrate deploy
+# DIRECT_URL is only ever used for schema administration: creating the
+# extension, applying migrations, forcing RLS. All three need privileges the
+# runtime role deliberately does not have.
+#
+# Its absence does not have to stop a deploy. What matters is not that this
+# script PERFORMED those steps, but that the database is in the state they
+# would produce — and every one of those states is READABLE by the runtime
+# role. So when DIRECT_URL is unusable, each administrative step becomes an
+# assertion instead of an action, and a failed assertion still stops the
+# deploy. The guarantee is unchanged; only who has to be able to write is.
+DB_ADMIN=1
+preflight DIRECT_URL "$PSQL_DIRECT" || DB_ADMIN=0
+if [[ "$DB_ADMIN" == "0" ]]; then
+  echo
+  echo "⚠ Continuing WITHOUT schema-administration privileges."
+  echo "  The steps below are verified rather than applied. Anything already"
+  echo "  out of place will stop the deploy — it just cannot be repaired here."
+fi
+
+step "1/7 PostGIS + migrations"
+if [[ "$DB_ADMIN" == "1" ]]; then
+  psql "$PSQL_DIRECT" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
+  npx prisma migrate deploy
+else
+  HAS_POSTGIS=$(psql "$PSQL_RUNTIME" -tAc "SELECT count(*) FROM pg_extension WHERE extname='postgis'")
+  [[ "$HAS_POSTGIS" == "1" ]] || fail "PostGIS is not installed and cannot be installed without DIRECT_URL."
+  echo "✓ PostGIS present"
+
+  # Prisma records each applied migration by folder name. Comparing the
+  # folders on disk against that table says whether this build's schema is
+  # the one the database actually has — which is the only thing `migrate
+  # deploy` would have told us here anyway, since it is a no-op when there is
+  # nothing pending.
+  APPLIED=$(psql "$PSQL_RUNTIME" -tAc \
+    "SELECT migration_name FROM kraal._prisma_migrations WHERE finished_at IS NOT NULL")
+
+  # An unmatched glob would otherwise expand to the literal pattern, fail the
+  # -f test, and leave the loop with nothing to compare — reporting success
+  # for having checked no migrations at all. A verification that passes
+  # vacuously is worse than no verification, because it reads as a guarantee.
+  shopt -s nullglob
+  MIGRATIONS=(prisma/migrations/*/)
+  shopt -u nullglob
+  [[ "${#MIGRATIONS[@]}" -gt 0 ]] || fail "No migration folders under prisma/migrations — refusing to report the schema as verified."
+
+  PENDING=""
+  for dir in "${MIGRATIONS[@]}"; do
+    [[ -f "$dir/migration.sql" ]] || continue
+    name=$(basename "$dir")
+    grep -qxF "$name" <<<"$APPLIED" || PENDING="$PENDING $name"
+  done
+  [[ -z "$PENDING" ]] || fail "Unapplied migration(s):$PENDING
+  These need DIRECT_URL — applying schema changes is exactly the privilege the
+  runtime role does not have. Fix the migration credential and re-run."
+  echo "✓ every migration on disk is applied ($(wc -l <<<"$APPLIED" | tr -d ' ') recorded)"
+fi
 
 step "2/7 Deny-all RLS on the kraal schema"
-# Scoped STRICTLY to the kraal schema. This database is shared with another
-# application in public; the public-scoped rls_deny_all.sql must NEVER run here.
-psql "$PSQL_DIRECT" -q <<'SQL'
+if [[ "$DB_ADMIN" == "1" ]]; then
+  # Scoped STRICTLY to the kraal schema. This database is shared with another
+  # application in public; the public-scoped rls_deny_all.sql must NEVER run here.
+  psql "$PSQL_DIRECT" -q <<'SQL'
 DO $$
 DECLARE t text;
 BEGIN
@@ -188,10 +239,28 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA kraal TO kraal_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA kraal TO kraal_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA kraal FROM anon, authenticated;
 SQL
-UNPROTECTED=$(psql "$PSQL_DIRECT" -tAc \
+fi
+
+# This check runs either way, and it is the part that actually matters. A table
+# with RLS off is readable by Supabase's public `anon` key — session tokens, OTP
+# hashes, the trust ledger, every farmer's phone number. pg_tables is readable
+# by any role, so the runtime connection can confirm it unaided.
+UNPROTECTED=$(psql "$PSQL_RUNTIME" -tAc \
   "SELECT count(*) FROM pg_tables WHERE schemaname='kraal' AND NOT rowsecurity")
-[[ "$UNPROTECTED" == "0" ]] || fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
-echo "✓ RLS forced on every kraal table; kraal_app policy refreshed"
+if [[ "$UNPROTECTED" != "0" ]]; then
+  [[ "$DB_ADMIN" == "1" ]] && fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
+  fail "$UNPROTECTED kraal table(s) have RLS OFF, and it cannot be turned on without DIRECT_URL.
+
+  Refusing to deploy. Those tables are exposed to Supabase's public anon key.
+  Either restore the migration credential and re-run, or run this in the SQL
+  editor:
+
+    ALTER TABLE kraal.<table> ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE kraal.<table> FORCE ROW LEVEL SECURITY;
+    CREATE POLICY kraal_app_all ON kraal.<table>
+      FOR ALL TO kraal_app USING (true) WITH CHECK (true);"
+fi
+echo "✓ RLS on every kraal table ($([[ "$DB_ADMIN" == "1" ]] && echo "forced and policy refreshed" || echo "verified"))"
 
 # The most dangerous silent failure in this deployment: kraal_app connecting
 # with a default search_path, so every unqualified query lands in public — on
