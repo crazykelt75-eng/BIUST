@@ -422,14 +422,27 @@ expect "unauthenticated publish is rejected" 401 \
 # otp_challenges row, so a success here means the worker reached the database,
 # addressed the right schema, and satisfied RLS — the three things that cannot
 # be confirmed from the build alone.
-CHALLENGE=$(curl -s -X POST "$URL/api/auth/request-code" \
-  -H 'content-type: application/json' -d '{"phone":"71234567"}' || true)
-if grep -q challengeId <<<"$CHALLENGE"; then
-  echo "  ✓ OTP request reached the database and wrote a challenge"
-else
-  echo "  ✗ OTP request failed: ${CHALLENGE:0:400}"
-  SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
-fi
+otp_check() { # otp_check <phone> <what>
+  local body
+  body=$(curl -s -X POST "$URL/api/auth/request-code" \
+    -H 'content-type: application/json' -d "{\"phone\":\"$1\"}" || true)
+  # RATE_LIMITED counts as reaching the database: the limiter's verdict comes
+  # from counting this number's recent challenges, which is a read of the very
+  # table a working path writes to. Only a 500 means the stack is broken.
+  if grep -qE 'challengeId|RATE_LIMITED' <<<"$body"; then
+    echo "  ✓ OTP request reached the database ($2)"
+  else
+    echo "  ✗ OTP request failed ($2): ${body:0:400}"
+    SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
+  fi
+}
+
+otp_check 71234567 "new number"
+# The number LIVE_TESTING.md tells a tester to sign in with. It is the seeded
+# admin, so it exercises the path against a user that already exists — worth
+# checking separately, because the documented first step of testing this app
+# failing is worse than an obscure endpoint failing.
+otp_check "${SEED_ADMIN_PHONE:-71000000}" "seeded admin"
 
 # When a check fails, the useful information is inside the worker, and the
 # response deliberately does not carry it — `error.generic` is what a user
