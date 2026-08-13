@@ -13,8 +13,15 @@
 name: Test
 
 on:
+  # Branch pushes are covered by the pull_request trigger. Running both fires
+  # the suite twice for every commit on a PR branch — same commit, same result,
+  # twice the minutes, and two CI notifications per push.
+  #
+  # Work pushed without a pull request gets no run. That is the trade, and it
+  # is the right way round: the point at which this must not be skipped is a
+  # merge, and a merge needs a pull request.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
 
 permissions:
