@@ -1,9 +1,17 @@
-# Deploys Kraal to Cloudflare Workers.
+# FULL manual fallback: database administration + Cloudflare deploy, in one
+# run, needing a Cloudflare API token.
+#
+# NOT the normal deploy path. Cloudflare Workers Builds deploys code on push
+# with no token in this repository (see DEPLOYMENT.md); scripts/db-migrate.sh
+# plus the "Database migration" workflow handle schema administration on their
+# own, needing only Supabase credentials. This workflow is what to reach for
+# if Workers Builds is ever disconnected, or a one-off deploy is needed from
+# CI without wrangler already logged in anywhere.
 #
 # Runs scripts/deploy.sh — the same one-command deploy a laptop would run —
-# on a GitHub runner, so no local tooling is needed. Triggered manually
-# (workflow_dispatch); it never fires on push, because a deploy that happens
-# as a side effect of committing is a deploy nobody decided to do.
+# on a GitHub runner, so no local tooling is needed. Manual only
+# (workflow_dispatch); a deploy that happens as a side effect of committing is
+# a deploy nobody decided to do, and Workers Builds already owns that trigger.
 #
 # Requires these repository secrets (Settings → Secrets and variables →
 # Actions → New repository secret):
@@ -17,18 +25,10 @@
 #                          full control of every project on the account, so
 #                          remove it once the credentials are settled.
 
-name: Deploy
+name: Deploy (full, manual fallback)
 
 on:
   workflow_dispatch:
-  # Deliberate-deploy workaround: GitHub does not register a workflow for API
-  # dispatch until it exists on the default branch. Until this file lands on
-  # main, a deploy is requested by changing .deploy-trigger on this branch —
-  # ordinary commits never fire it, so deploys stay a decision, not a side
-  # effect.
-  push:
-    branches: [claude/farmer-marketplace-platform-yha3pl]
-    paths: ['.deploy-trigger']
 
 permissions:
   contents: read

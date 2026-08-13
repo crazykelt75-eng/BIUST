@@ -3,6 +3,58 @@
 Target: **Supabase** for Postgres/PostGIS, **Cloudflare Workers** for the app
 (via OpenNext), **Cloudflare R2** for photos.
 
+## Architecture: three independent, mostly secretless pieces
+
+| Piece | Trigger | Needs | What it does |
+|---|---|---|---|
+| **Cloudflare Workers Builds** | push, on Cloudflare's own git integration | nothing in GitHub — Cloudflare authenticates itself | builds and deploys the code |
+| `db-migrate.yml` | manual | `DATABASE_URL`, `DIRECT_URL` (Supabase only) | migrations, RLS, seed |
+| `test.yml` | push/PR | nothing | typecheck + unit tests |
+| `smoke.yml` | schedule (30 min) + manual | nothing | verifies the live site over plain HTTP |
+
+`deploy.yml` / `scripts/deploy.sh` still exist as a full manual fallback that
+does everything in one run, for if Workers Builds is ever disconnected — see
+the comment at the top of each file. It is the only piece that still needs a
+`CLOUDFLARE_API_TOKEN` in GitHub, which is why it is not the default path: a
+token sitting in a GitHub secret can go stale (get rotated, revoked, expire)
+without anything noticing until the next deploy — which is exactly what
+happened on 2026-08-13. Workers Builds does not have this failure mode,
+because Cloudflare manages its own build credential internally.
+
+### One-time setup: connect Workers Builds
+
+This is a dashboard action — nothing here can do it, since it is the
+credential-issuing step itself.
+
+1. Cloudflare dashboard → **Workers & Pages** → select the `kraal` worker →
+   **Settings** → **Builds** → **Connect**, and authorize the
+   `crazykelt75-eng/BIUST` repository.
+2. Build settings:
+   - **Branch**: `main` (or whichever branch should auto-deploy)
+   - **Build command**: `npm ci && npm run cf:build`
+   - **Deploy command**: `npx wrangler deploy`
+   - **Root directory**: `/` (default)
+3. **Settings → Variables and Secrets** on the same worker — add these as
+   **Secret** type, not plaintext `vars`. This is separate from the build
+   config above and is where the app's runtime configuration actually lives
+   now; nothing here comes from GitHub:
+
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | Supabase transaction pooler, port 6543, `?pgbouncer=true&connection_limit=1` |
+   | `DIRECT_URL` | Supabase session pooler, port 5432, `?schema=kraal` |
+   | `DB_SCHEMA` | `kraal` |
+   | `OTP_PEPPER` | `openssl rand -base64 32` |
+   | `ALLOW_CONSOLE_SMS` | `true` — until Africa's Talking is wired, see §4b |
+
+   `S3_*` (§4) and `AT_*` (§4b) go here too once those accounts exist.
+4. Push a commit. Cloudflare builds and deploys automatically; watch progress
+   under the worker's **Deployments** tab.
+
+Note the "API token" field Cloudflare shows during setup is **not** something
+to create or paste — leave it on the default. Cloudflare generates and holds
+that one itself; it never touches this repository.
+
 ## Current state (provisioned 2026-07-26)
 
 The database side is **done**, in the `kraal` schema of the existing shared
@@ -27,13 +79,12 @@ returns P2021 on the same connection. `deploy.sh` derives `DB_SCHEMA` from
 `DIRECT_URL` and pushes it as a worker secret. Note the option belongs in
 `PrismaPg`'s **second** argument; in the pool config it is silently ignored.
 
-Remaining, on a machine with `wrangler login`:
-
-1. Set the runtime role's password (Supabase SQL editor, once):
-   `ALTER ROLE kraal_app PASSWORD '...';` — it is created unusable until then.
-2. `cp .deploy.env.example .deploy.env`, fill in, `./scripts/deploy.sh`.
-
-The sections below document the full path for a fresh, dedicated project. On
+This part is done: `kraal_app`'s password is set, and the database has been
+live-serving through Workers Builds since 2026-08-13 — see the architecture
+table above for how a deploy happens now. The sections below document the
+full path for a fresh, dedicated project, and are also what `scripts/deploy.sh`
+(the manual fallback) and `scripts/db-migrate.sh` (the normal one) automate.
+On
 the shared project, **never run `rls_deny_all.sql`** — it is public-scoped and
 would break the other application; `deploy.sh` carries a kraal-scoped version
 and hard-stops without `?schema=kraal` in `DIRECT_URL`.
@@ -191,18 +242,24 @@ means the queues need not exist before the first deploy. The config comment
 documents how to re-enable them (create the queues, add a wrapper entry that
 gives the worker a `queue()` handler) when volume justifies it.
 
-## 4d. The short path: one command
+## 4d. The short paths
+
+Two commands now, doing two separate jobs — see the architecture table at the
+top of this document for why they are split.
 
 ```bash
-cp .deploy.env.example .deploy.env   # fill in Supabase creds + OTP_PEPPER
-npx wrangler login
-./scripts/deploy.sh
+cp .deploy.env.example .deploy.env   # fill in Supabase creds
+./scripts/db-migrate.sh              # migrations, RLS, seed — no Cloudflare
 ```
 
-The script runs migrations, forces RLS and refuses to continue if any table is
-left unprotected, seeds zones, pushes secrets, builds, deploys, and smoke-tests
-the URL. Everything below documents what it does, for when a step needs to be
-run by hand.
+```bash
+npx wrangler login
+./scripts/deploy.sh                  # everything, including the Cloudflare
+                                      # deploy — the manual fallback
+```
+
+Everything below documents what each does, for when a step needs to be run by
+hand.
 
 ## 4e. Role bootstrap — optional, and best removed once it has done its job
 
@@ -227,7 +284,15 @@ that only occurs during bootstrap.
 
 ## 5. Cloudflare secrets
 
-Never put these in `wrangler.jsonc` — it is committed.
+Two ways to set these, matching the two deploy paths. Never put them in
+`wrangler.jsonc` — it is committed.
+
+**Via Workers Builds (normal path):** Cloudflare dashboard → the `kraal`
+worker → **Settings → Variables and Secrets** → Add, one at a time, type
+**Secret**. Exact list in "One-time setup" above. Takes effect on the next
+push; no separate `wrangler secret put` needed.
+
+**Via `wrangler` directly (manual fallback, `scripts/deploy.sh` does this):**
 
 ```bash
 npx wrangler secret put DATABASE_URL
@@ -250,6 +315,9 @@ expire in five minutes anyway.
 ---
 
 ## 6. Deploy
+
+Via Workers Builds, this is just `git push` — see "One-time setup" above. By
+hand:
 
 ```bash
 npm run cf:build      # next build + opennextjs-cloudflare build
@@ -274,6 +342,12 @@ Two things make this work on Workers and both are easy to undo by accident:
 ---
 
 ## 7. Post-deploy checks
+
+```bash
+./scripts/smoke.sh    # no secrets — also runs on a schedule, see smoke.yml
+```
+
+Or by hand:
 
 ```bash
 BASE=https://kraal.<subdomain>.workers.dev

@@ -1,0 +1,31 @@
+# Health check against the live site. No secrets — three HTTP requests
+# against public endpoints via scripts/smoke.sh.
+#
+# Runs on a schedule so a failure surfaces without anyone polling by hand,
+# and on demand for a quick "is it actually up" check. A failure here does
+# not distinguish a real outage from a transient one — Supabase's connection
+# pooler occasionally rejects a cached connection and recovers on its own —
+# so treat one red run as "look", not "panic"; a red run that stays red on
+# the next scheduled check is the one that means something is actually wrong.
+
+name: Smoke check
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-check
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/smoke.sh

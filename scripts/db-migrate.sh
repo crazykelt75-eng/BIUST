@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
 #
-# One-command FULL deploy: database administration + Cloudflare Workers,
-# in one script, needing a Cloudflare API token.
+# Database administration: PostGIS, migrations, deny-all RLS, zone seed.
 #
-# NOT the normal path anymore. Cloudflare Workers Builds now deploys code on
-# push with no token in this repository at all (see DEPLOYMENT.md), and
-# scripts/db-migrate.sh handles the database half on its own, needing only
-# Supabase credentials. This script still exists as a complete manual
-# fallback — a single command that does everything, useful if Workers Builds
-# is ever disconnected or you are deploying from a machine with wrangler
-# already logged in.
+# This is deliberately NOT a deploy script. It touches nothing on Cloudflare —
+# no wrangler, no worker secrets, no API token. Code deployment is handled by
+# Cloudflare Workers Builds (git-connected, configured in the Cloudflare
+# dashboard — see DEPLOYMENT.md), which needs no credential in this repository
+# at all. This script exists for the one thing Workers Builds cannot do:
+# administer the shared Supabase database, which needs privileges the
+# runtime role deliberately does not have.
 #
-# Everything DEPLOYMENT.md describes, in order, with the RLS step impossible
-# to skip. Run it from a machine where `npx wrangler login` has been done.
+# Run it once at first provision, and again whenever prisma/migrations gains a
+# new folder. A push with no schema change does not need this script — the
+# checks below are idempotent and mostly no-ops on an already-correct database,
+# which is why it is safe to run more often than strictly necessary.
 #
 # Required environment (put them in .deploy.env, which is gitignored):
 #
 #   DATABASE_URL   Supabase transaction pooler (port 6543,
 #                  ...?pgbouncer=true&connection_limit=1)
-#   DIRECT_URL     Supabase direct connection (port 5432)
-#   OTP_PEPPER     openssl rand -base64 32
+#   DIRECT_URL     Supabase direct connection (port 5432, ?schema=kraal)
 #
-# Optional (photo storage — omit both blocks below to fail fast instead):
-#   S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_PUBLIC_BASE_URL
-#
-# Optional (SMS — omit to use the console escape hatch for testing):
-#   AT_API_KEY AT_USERNAME AT_SENDER_ID
-#
-#   SEED_ADMIN_PHONE   e.g. 71000000 — creates a test admin
+# Optional:
+#   SUPABASE_ACCESS_TOKEN   lets a failed connection repair itself (see
+#                           db-bootstrap.py). Grants full account control;
+#                           remove the secret once credentials are settled.
+#   SEED_ADMIN_PHONE        e.g. 71000000 — creates/refreshes a test admin
 #
 # Usage:
 #   cp .deploy.env.example .deploy.env  &&  edit it
-#   ./scripts/deploy.sh
+#   ./scripts/db-migrate.sh
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -45,8 +43,6 @@ step() { echo; echo "━━ $1"; }
 
 [[ -n "${DATABASE_URL:-}" ]] || fail "DATABASE_URL is not set (Supabase pooler, port 6543)"
 [[ -n "${DIRECT_URL:-}"   ]] || fail "DIRECT_URL is not set (Supabase direct, port 5432)"
-[[ -n "${OTP_PEPPER:-}"   ]] || fail "OTP_PEPPER is not set (openssl rand -base64 32)"
-[[ "${#OTP_PEPPER}" -ge 16 ]] || fail "OTP_PEPPER must be at least 16 characters"
 [[ "$DATABASE_URL" == *6543* ]] || echo "⚠ DATABASE_URL does not look like the 6543 pooler — check it"
 [[ "$DIRECT_URL"   == *5432* ]] || echo "⚠ DIRECT_URL does not look like the 5432 direct port — check it"
 # The database is shared with another application in public. Prisma finds its
@@ -62,24 +58,6 @@ step() { echo; echo "━━ $1"; }
 DB_SCHEMA="$(sed -n 's/.*[?&]schema=\([^&]*\).*/\1/p' <<<"$DIRECT_URL")"
 export DB_SCHEMA
 [[ -n "$DB_SCHEMA" ]] || fail "Could not read the schema from DIRECT_URL"
-
-if ! npx wrangler whoami > /dev/null 2>&1; then
-  # Distinguish the two situations, because the fix for one is impossible in
-  # the other: `wrangler login` opens a browser, which no CI runner has.
-  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-    fail "CLOUDFLARE_API_TOKEN is set but Cloudflare rejects it.
-
-  The token is invalid, expired, or revoked — rotating it without updating the
-  secret leaves exactly this state. Create one from the 'Edit Cloudflare
-  Workers' template and update the CLOUDFLARE_API_TOKEN repository secret.
-
-  Note this does NOT stop the already-deployed worker from serving. If the live
-  site is also failing, that is a separate credential: the worker holds its own
-  copy of DATABASE_URL, so rotating the database password breaks every request
-  that touches the database until a deploy pushes the new one."
-  fi
-  fail "wrangler is not logged in. Run: npx wrangler login (or set CLOUDFLARE_API_TOKEN for CI)"
-fi
 
 # psql speaks libpq, which rejects Prisma's query parameters outright — it errors
 # on the URI rather than ignoring what it does not know. Drop them for psql;
@@ -137,7 +115,7 @@ preflight() {
   # Supabase's pooler caches each role's credentials, so a connection made
   # seconds after ALTER ROLE can still be checked against the old password and
   # rejected. That is indistinguishable from a genuinely wrong password on the
-  # first attempt, and it is the difference between two consecutive deploys
+  # first attempt, and it is the difference between two consecutive runs
   # disagreeing about the same credential. Retry the auth failures; everything
   # else fails immediately, because no amount of waiting fixes a bad hostname.
   while :; do
@@ -232,8 +210,8 @@ repair() {
   python3 scripts/db-bootstrap.py
 }
 
-# DATABASE_URL is what the application runs on. Without it there is nothing to
-# deploy, so its failure is fatal.
+# DATABASE_URL is what the application runs on. Without it there is nothing
+# for a deploy to serve against, so its failure is fatal.
 if ! preflight DATABASE_URL "$PSQL_RUNTIME"; then
   repair || fail "DATABASE_URL is unusable — the application cannot run without it. Nothing was changed."
   preflight DATABASE_URL "$PSQL_RUNTIME" \
@@ -244,22 +222,22 @@ fi
 # extension, applying migrations, forcing RLS. All three need privileges the
 # runtime role deliberately does not have.
 #
-# Its absence does not have to stop a deploy. What matters is not that this
+# Its absence does not have to stop this script. What matters is not that this
 # script PERFORMED those steps, but that the database is in the state they
 # would produce — and every one of those states is READABLE by the runtime
 # role. So when DIRECT_URL is unusable, each administrative step becomes an
-# assertion instead of an action, and a failed assertion still stops the
-# deploy. The guarantee is unchanged; only who has to be able to write is.
+# assertion instead of an action, and a failed assertion still stops the run.
+# The guarantee is unchanged; only who has to be able to write is.
 DB_ADMIN=1
 preflight DIRECT_URL "$PSQL_DIRECT" || DB_ADMIN=0
 if [[ "$DB_ADMIN" == "0" ]]; then
   echo
   echo "⚠ Continuing WITHOUT schema-administration privileges."
   echo "  The steps below are verified rather than applied. Anything already"
-  echo "  out of place will stop the deploy — it just cannot be repaired here."
+  echo "  out of place will stop the run — it just cannot be repaired here."
 fi
 
-step "1/7 PostGIS + migrations"
+step "1/3 PostGIS + migrations"
 if [[ "$DB_ADMIN" == "1" ]]; then
   psql "$PSQL_DIRECT" -qc 'CREATE EXTENSION IF NOT EXISTS postgis;'
   npx prisma migrate deploy
@@ -297,7 +275,7 @@ else
   echo "✓ every migration on disk is applied ($(wc -l <<<"$APPLIED" | tr -d ' ') recorded)"
 fi
 
-step "2/7 Deny-all RLS on the kraal schema"
+step "2/3 Deny-all RLS on the kraal schema"
 if [[ "$DB_ADMIN" == "1" ]]; then
   # Scoped STRICTLY to the kraal schema. This database is shared with another
   # application in public; the public-scoped rls_deny_all.sql must NEVER run here.
@@ -328,7 +306,7 @@ if [[ "$UNPROTECTED" != "0" ]]; then
   [[ "$DB_ADMIN" == "1" ]] && fail "$UNPROTECTED kraal table(s) still have RLS off — refusing to continue"
   fail "$UNPROTECTED kraal table(s) have RLS OFF, and it cannot be turned on without DIRECT_URL.
 
-  Refusing to deploy. Those tables are exposed to Supabase's public anon key.
+  Refusing to continue. Those tables are exposed to Supabase's public anon key.
   Either restore the migration credential and re-run, or run this in the SQL
   editor:
 
@@ -356,147 +334,14 @@ fi
 
     ALTER ROLE kraal_app SET search_path = kraal, extensions;
 
-  Then re-run. Refusing to deploy against the wrong schema."
+  Then re-run. Refusing to continue against the wrong schema."
 echo "✓ runtime search_path resolves to kraal ($RUNTIME_PATH)"
 
-step "3/7 Seed (zones + optional test admin)"
+step "3/3 Seed (zones + optional test admin)"
 node prisma/seed.mjs
 
-step "4/7 Build (Next + OpenNext, budget enforced)"
-npm run cf:build
-BINARIES=$(find .open-next -name '*.node' | wc -l)
-[[ "$BINARIES" == "0" ]] || fail "Native binaries in the bundle — engineType=client regressed"
-
-# Prisma must load its query compiler as a WASM module, not off a filesystem
-# the Workers runtime does not have. Both wrong ways build and deploy cleanly
-# and fail on every database request afterwards, so check the bundle rather
-# than waiting for the smoke tests to find it.
-HANDLER=.open-next/server-functions/default/handler.mjs
-if [[ -f "$HANDLER" ]]; then
-  grep -q 'queryCompilerWasmFilePath' "$HANDLER" && fail "The bundle loads Prisma's query compiler from disk.
-  Workers have no filesystem; every database request will fail with
-  '[unenv] fs.readFileSync is not implemented yet'. The Workers client alias in
-  next.config.mjs has regressed — check CF_WORKERS is set and that
-  src/db/prisma-client.ts is the import path used."
-  WASM_IMPORTS=$(grep -o 'query_compiler_bg\.wasm?module' "$HANDLER" | wc -l)
-  [[ "$WASM_IMPORTS" -gt 0 ]] || fail "No WASM query-compiler import in the bundle — the Workers Prisma client is not being used."
-  echo "✓ Prisma query compiler bundled as WASM ($WASM_IMPORTS import sites, one file)"
-fi
-
-step "5/7 Deploy"
-DEPLOY_OUT=$(npx wrangler deploy 2>&1) || { echo "$DEPLOY_OUT"; fail "wrangler deploy failed"; }
-echo "$DEPLOY_OUT" | tail -3
-URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)
-
-step "6/7 Cloudflare secrets"
-# After the deploy, deliberately: `wrangler secret put` fails on a worker that
-# does not exist yet, so on a first run the worker must be created first. A
-# few seconds of a live worker without secrets is harmless — every request in
-# that window fails closed on the missing DATABASE_URL. Updated secrets take
-# effect immediately; no second deploy is needed.
-put() { printf '%s' "$2" | npx wrangler secret put "$1" > /dev/null && echo "  ✓ $1"; }
-put DATABASE_URL "$DATABASE_URL"
-put DIRECT_URL   "$DIRECT_URL"
-put OTP_PEPPER   "$OTP_PEPPER"
-# Without this the worker's model queries address `public` — the other
-# application's schema — and fail with P2021 on every request.
-put DB_SCHEMA    "$DB_SCHEMA"
-
-if [[ -n "${S3_ENDPOINT:-}" ]]; then
-  put S3_ENDPOINT "$S3_ENDPOINT"; put S3_BUCKET "$S3_BUCKET"
-  put S3_ACCESS_KEY_ID "$S3_ACCESS_KEY_ID"; put S3_SECRET_ACCESS_KEY "$S3_SECRET_ACCESS_KEY"
-  put S3_PUBLIC_BASE_URL "${S3_PUBLIC_BASE_URL:-$S3_ENDPOINT/$S3_BUCKET}"
-else
-  echo "  ⚠ No R2 credentials. Photo upload will fail on Workers (no disk there);"
-  echo "    enable R2 in the dashboard, make a bucket + token, and re-run."
-fi
-
-if [[ -n "${AT_API_KEY:-}" ]]; then
-  put AT_API_KEY "$AT_API_KEY"; put AT_USERNAME "$AT_USERNAME"
-  [[ -n "${AT_SENDER_ID:-}" ]] && put AT_SENDER_ID "$AT_SENDER_ID"
-else
-  put ALLOW_CONSOLE_SMS "true"
-  echo "  ⚠ TEST MODE: OTP codes will be written to the worker log."
-  echo "    Read them with: npx wrangler tail kraal --format pretty"
-fi
-
-step "7/7 Smoke checks"
-[[ -n "$URL" ]] || { echo "⚠ Could not detect the URL; run the checks from DEPLOYMENT.md §7"; exit 0; }
-
-# Every command here is guarded. An unguarded `grep` with no match returns 1,
-# and under `set -e` that ends the script mid-verification — which reads in the
-# log exactly like a failed deploy, on a deploy that in fact succeeded.
-SMOKE_FAILURES=0
-expect() { # expect <what> <wanted> <got>
-  if [[ "$3" == "$2" ]]; then
-    echo "  ✓ $1"
-  else
-    echo "  ✗ $1 — expected $2, got $3"
-    SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
-  fi
-}
-
-sleep 5   # a new version takes a moment to start serving
-
-expect "home page serves" 200 \
-  "$(curl -s -o /dev/null -w '%{http_code}' "$URL/" || echo 000)"
-expect "unauthenticated publish is rejected" 401 \
-  "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/listings" || echo 000)"
-
-# The one that proves the whole stack. Requesting a code writes an
-# otp_challenges row, so a success here means the worker reached the database,
-# addressed the right schema, and satisfied RLS — the three things that cannot
-# be confirmed from the build alone.
-otp_check() { # otp_check <phone> <what>
-  local body
-  body=$(curl -s -X POST "$URL/api/auth/request-code" \
-    -H 'content-type: application/json' -d "{\"phone\":\"$1\"}" || true)
-  # RATE_LIMITED counts as reaching the database: the limiter's verdict comes
-  # from counting this number's recent challenges, which is a read of the very
-  # table a working path writes to. Only a 500 means the stack is broken.
-  if grep -qE 'challengeId|RATE_LIMITED' <<<"$body"; then
-    echo "  ✓ OTP request reached the database ($2)"
-  else
-    echo "  ✗ OTP request failed ($2): ${body:0:400}"
-    SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
-  fi
-}
-
-otp_check 71234567 "new number"
-# The number LIVE_TESTING.md tells a tester to sign in with. It is the seeded
-# admin, so it exercises the path against a user that already exists — worth
-# checking separately, because the documented first step of testing this app
-# failing is worse than an obscure endpoint failing.
-otp_check "${SEED_ADMIN_PHONE:-71000000}" "seeded admin"
-
-# When a check fails, the useful information is inside the worker, and the
-# response deliberately does not carry it — `error.generic` is what a user
-# should see, not what a deploy log should have to work from. Attach to the
-# live log stream and reissue the failing requests, so the actual exception
-# lands in CI rather than requiring someone to reproduce it by hand.
-if [[ "$SMOKE_FAILURES" != "0" ]]; then
-  echo
-  echo "━━ Capturing worker logs for the failing requests"
-  npx wrangler tail kraal --format pretty > /tmp/kraal-tail.log 2>&1 &
-  TAIL_PID=$!
-  sleep 8   # tail takes a few seconds to attach; requests before that are lost
-  curl -s -o /dev/null "$URL/" || true
-  curl -s -o /dev/null -X POST "$URL/api/auth/request-code" \
-    -H 'content-type: application/json' -d '{"phone":"71234567"}' || true
-  sleep 8
-  kill "$TAIL_PID" 2>/dev/null || true
-  wait "$TAIL_PID" 2>/dev/null || true
-  echo "───── worker log ─────"
-  tail -80 /tmp/kraal-tail.log 2>/dev/null || echo "(no log captured)"
-  echo "───── end worker log ─────"
-fi
-
 echo
-[[ "$SMOKE_FAILURES" == "0" ]] || fail "$SMOKE_FAILURES smoke check(s) failed.
-  The worker is deployed at $URL but is not serving correctly. It was
-  previously possible for this to print ✗ and still exit 0 — a deploy that
-  reports success while broken is worse than one that fails."
-
-echo "Live at: $URL"
-echo "OTP codes (test mode): npx wrangler tail kraal --format pretty"
-echo "Tester guide: LIVE_TESTING.md"
+echo "Database ready. Cloudflare Workers Builds deploys the code on push —"
+echo "see DEPLOYMENT.md. Worker runtime secrets (DATABASE_URL, DIRECT_URL,"
+echo "DB_SCHEMA=$DB_SCHEMA, OTP_PEPPER, ...) are set once in the Cloudflare"
+echo "dashboard under the Worker's Settings → Variables and Secrets — not here."
