@@ -1,0 +1,56 @@
+# Runs on every push and pull request.
+#
+# Deliberately separate from deploy.yml, and deliberately needs no secrets:
+# this must run on a pull request from anyone, and a workflow that cannot run
+# without production credentials is a workflow that stops running.
+#
+# It covers the unit suite and the type check. The integration suite is not
+# here — it needs a live Postgres with PostGIS, and a test that silently skips
+# when its database is absent reports success for having checked nothing.
+# Adding it means starting a real service container; worth doing, not worth
+# faking.
+
+name: Test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Both Prisma clients are generated, not committed. Without this the type
+      # check fails on imports that resolve to nothing.
+      - name: Generate Prisma clients
+        env:
+          # `generate` never connects; the schema only needs the variable to
+          # exist so it can be interpolated.
+          DATABASE_URL: postgresql://unused:unused@localhost:5432/unused
+          DIRECT_URL: postgresql://unused:unused@localhost:5432/unused
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
