@@ -1,0 +1,52 @@
+{
+  "name": "kraal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Farmer-to-farmer and butcher livestock marketplace",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && npm run check:bundle",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:all": "npm run test && npm run test:integration",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
+    "cf:build": "prisma generate && CF_WORKERS=1 opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare deploy",
+    "db:rls": "psql \"$DIRECT_URL\" -f prisma/sql/rls_deny_all.sql",
+    "db:seed": "node prisma/seed.mjs"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.9.0",
+    "@prisma/client": "^6.19.3",
+    "@tailwindcss/postcss": "^4.3.3",
+    "next": "^15.1.0",
+    "pg": "^8.22.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.3.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.2",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prisma": "^6.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.114.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

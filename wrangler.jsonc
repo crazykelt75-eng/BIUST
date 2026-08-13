@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kraal",
+  "main": ".open-next/worker.js",
+
+  // nodejs_compat is required: Prisma's driver adapter routes through `pg`,
+  // which needs Node's net/tls/crypto shims. Without it the worker fails at
+  // import time, not at query time.
+  "compatibility_date": "2025-03-25",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Queues are DISABLED for the first test deploy, deliberately.
+  //
+  // Two reasons. First, attaching a consumer here was a bug: the OpenNext-
+  // generated worker exports only fetch, so queue messages would have been
+  // delivered to a handler that does not exist. Re-enabling needs a wrapper
+  // entry that re-exports the OpenNext handler and adds queue() from
+  // src/workers/queue-consumer.ts. Second, with no QUEUE binding the app runs
+  // fan-out inline in the request — correct at test volume, and it means the
+  // queues do not have to exist before the first deploy.
+  //
+  // To enable later:
+  //   npx wrangler queues create kraal-jobs && npx wrangler queues create kraal-jobs-dlq
+  //   add the wrapper entry, then restore:
+  // "queues": {
+  //   "producers": [{ "queue": "kraal-jobs", "binding": "QUEUE" }],
+  //   "consumers": [{ "queue": "kraal-jobs", "max_batch_size": 10,
+  //     "max_batch_timeout": 5, "max_retries": 3,
+  //     "dead_letter_queue": "kraal-jobs-dlq" }]
+  // },
+
+  // Secrets are NOT set here. Use `wrangler secret put NAME` so they never
+  // enter the repository:
+  //   DATABASE_URL   Supabase transaction pooler, port 6543
+  //   DIRECT_URL     Supabase direct connection, port 5432 (migrations only)
+  //   OTP_PEPPER     openssl rand -base64 32
+  //   S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY   R2 API token
+  //   AT_API_KEY     Africa's Talking, once SMS is wired
+  "vars": {
+    "NODE_ENV": "production"
+  }
+}

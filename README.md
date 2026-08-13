@@ -1,0 +1,185 @@
+# Kraal
+
+Farmer-to-farmer and butcher livestock marketplace for Botswana.
+
+Farmers post cattle and other farm products; other farmers and butchers are
+notified of what matches their needs and can buy in — individually, by splitting
+a lot, or by pooling into a syndicate.
+
+**The full specification is in [`MASTER_PROMPT.md`](./MASTER_PROMPT.md).** It is
+the source of truth; this README only covers the state of the code.
+
+---
+
+## Where the build has got to
+
+Phase 1, walkable end to end: signup → farm → verification → publish →
+offer → accept, verified against a running server. `LIVE_TESTING.md` is the
+tester's guide.
+
+| Area | State |
+|---|---|
+| Product & architecture spec | ✅ `MASTER_PROMPT.md` |
+| Prisma schema (Phase 1 scope) | ✅ `prisma/schema.prisma` — validates |
+| Append-only + ledger DB constraints | ✅ `prisma/sql/append_only.sql` |
+| Money primitives | ✅ `src/domain/money.ts` |
+| Double-entry ledger | ✅ `src/domain/ledger/` |
+| Trust reconciliation | ✅ `src/domain/ledger/reconcile.ts` |
+| Weight-tolerance settlement | ✅ `src/domain/settlement.ts` |
+| Transaction state machine | ✅ `src/domain/transaction/` |
+| Zone movement feasibility | ✅ `src/domain/zones/` |
+| Alert matching & delivery | ✅ `src/domain/matching/` |
+| Verification tiers | ✅ `src/domain/verification.ts` |
+| Initial migration (applied, PostGIS) | ✅ `prisma/migrations/` |
+| Setswana + English i18n | ✅ `src/i18n/` |
+| Listing validation (LITS, animals) | ✅ `src/domain/listing/` |
+| Listing publish + anti-theft checks | ✅ `src/services/listing-service.ts` |
+| Animal provenance chain | ✅ `AnimalTransfer` |
+| Alert match worker | ✅ `src/services/match-worker.ts` |
+| Ledger persistence + idempotency | ✅ `src/db/ledger-repository.ts` |
+| Transaction orchestration | ✅ `src/services/transaction-service.ts` |
+| Listing creation UI (offline, i18n) | ✅ `src/app/sell/` |
+| Browse page (SSR) | ✅ `src/app/page.tsx` |
+| Publish API route | ✅ `src/app/api/listings/` |
+| Bundle budget guard | ✅ `scripts/check-bundle-budget.mjs` |
+| Phone-OTP auth + sessions | ✅ `src/services/auth-service.ts` |
+| Server-side capability gates | ✅ `src/lib/session.ts` |
+| Sign-in / verify pages | ✅ `src/app/signin/`, `src/app/verify/` |
+| Photo upload, EXIF handling, storage | ✅ `src/services/photo-service.ts` |
+| Supabase + Cloudflare deploy config | ✅ `DEPLOYMENT.md`, `wrangler.jsonc` |
+| Deny-all RLS for Supabase | ✅ `prisma/sql/rls_deny_all.sql` |
+| SMS gateway (Africa's Talking) | ✅ `src/services/sms/` |
+| SMS delivery log | ✅ `SmsDelivery` |
+| Cloudflare Queues fan-out | ✅ `src/services/queue.ts`, `src/workers/` |
+| Offers: make/accept/decline/counter | ✅ `src/services/offer-service.ts` |
+| Onboarding: farm + verification + tier | ✅ `src/services/onboarding-service.ts` |
+| Listing detail, dashboard, admin queue | ✅ `src/app/` |
+| Seed + live-test guide | ✅ `prisma/seed.mjs`, `LIVE_TESTING.md` |
+| Escrow UI, photo resizing, syndicates | ⬜ Not started |
+
+194 unit tests + 55 integration tests, all passing.
+
+```bash
+npm install
+npm test              # unit — no database needed
+npm run typecheck
+npm run build         # builds and enforces the JS budget
+npm run dev
+
+npm run test:integration   # needs a live PostgreSQL 16 + PostGIS
+npm run test:all
+```
+
+## Why the domain core came first
+
+Everything under `src/domain/` is pure, dependency-free TypeScript with no
+database or framework in it, and `src/db/` and `src/services/` are thin layers
+over it. That is deliberate — these are the rules that are expensive to retrofit
+and cheap to get right early:
+
+- **The ledger.** A double-entry ledger bolted onto months of ad-hoc transfers
+  is a reconstruction project. Built first, it costs a week.
+- **The fund wall.** Client money and platform money are separate accounts, and
+  `buildEntry` rejects any posting that moves value across the wall without a
+  balanced pair on each side. Commingling is a thrown error, not a code review
+  question.
+- **Zone restrictions.** Movement blocks are enforced in the state machine, so
+  no feature can accidentally route around them later.
+
+## Running the database
+
+Requires PostgreSQL 16 with PostGIS.
+
+```bash
+createdb kraal
+psql kraal -c 'CREATE EXTENSION IF NOT EXISTS postgis;'
+export DATABASE_URL="postgresql://localhost:5432/kraal"
+
+npx prisma migrate dev --create-only --name init
+cat prisma/sql/append_only.sql >> prisma/migrations/*_init/migration.sql
+npx prisma migrate dev
+```
+
+The append-only triggers and ledger constraints must be appended to the initial
+migration — Prisma does not generate them. The committed migration already
+includes them.
+
+Integration tests truncate every table between cases, so point `DATABASE_URL`
+at a disposable database, never a shared one.
+
+## Deploying
+
+See **[`DEPLOYMENT.md`](./DEPLOYMENT.md)** for Supabase + Cloudflare.
+
+Read §1 of it before anything else: Supabase exposes every `public` table over
+HTTPS via PostgREST using a key that is public by design. Without the deny-all
+RLS in `prisma/sql/rls_deny_all.sql`, session token hashes and the trust ledger
+are world-readable.
+
+## Configuration
+
+`OTP_PEPPER` is **required in production** and must be at least 16 characters;
+the app refuses to issue codes without it. Without a pepper, a leaked database
+yields a rainbow table of one million entries, which is no protection at all
+for a 6-digit code. See `.env.example`.
+
+```bash
+openssl rand -base64 32
+```
+
+## Photos
+
+Uploads are validated from their own bytes, never the declared content type or
+extension — a `.jpg` that is actually HTML becomes stored XSS on a CDN that
+trusts the name. Only JPEG, PNG and WebP pass.
+
+EXIF is read and then removed, which sounds contradictory but is the point.
+Capture coordinates and time are kept server-side as fraud signals (§8.3),
+while the bytes that get stored and served carry no metadata at all — a photo
+with GPS intact publishes the exact location of a cattle post, and stock theft
+is the dominant fraud in this market (§4.3).
+
+Storage keys are random rather than sequential, so one photo URL does not let
+anyone enumerate every other listing's photos.
+
+## Not yet safe to deploy
+
+Photo serving goes straight to the R2 public URL, so every listing card
+downloads a full-size image. Put Cloudflare Images or a resizing Worker in
+front before launch — this is a metered-data cost borne by the user.
+
+## Before this takes real money
+
+Two items in `MASTER_PROMPT.md` §14 gate going live with escrow, and both are
+legal rather than technical:
+
+1. Trust account structure — segregated corporate account, or an attorney's
+   trust account with statutory ring-fencing.
+2. Whether holding client funds requires authorisation under the National
+   Payment System Act.
+
+The code is agnostic to how these resolve. Taking a deposit is not.
+
+## Layout
+
+```
+MASTER_PROMPT.md          Specification — read this first
+prisma/schema.prisma      Phase 1 data model
+prisma/sql/               DB-level constraints Prisma cannot express
+src/domain/
+  money.ts                Integer thebe, safe splitting, no floats
+  verification.ts         Tiers and capability gates
+  settlement.ts           Weight tolerance and settlement arithmetic
+  listing/                LITS validation, animal and listing schemas
+  ledger/                 Double-entry journal, events, reconciliation
+  transaction/            Transaction state machine and timeouts
+  zones/                  Movement feasibility between disease-control zones
+  matching/               Alert scoring and delivery decisions
+  auth/                   OTP policy: rate limits, attempt caps, phone format
+  media/                  Upload validation: magic bytes, size, storage keys
+src/db/                   Prisma client, ledger persistence
+src/services/             Listing publication, transactions, match fan-out
+src/i18n/                 Setswana and English catalogue
+src/app/                  Next.js routes, pages, and API handlers
+src/lib/                  Session cookies, capability guards, offline drafts
+```

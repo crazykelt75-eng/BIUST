@@ -1,0 +1,1165 @@
+// Kraal — Phase 1 data model
+// See MASTER_PROMPT.md §10.3 for the full model; this covers Phase 1 scope only.
+//
+// Conventions:
+//   - All money is BigInt in THEBE (BWP minor units). Never Float, never Decimal-as-float.
+//   - Geography columns use PostGIS `geography(Point, 4326)` via Unsupported(); spatial
+//     queries are raw SQL (see src/db/spatial.ts).
+//   - transaction_events, journal_* and audit_log are APPEND-ONLY. No updates, no deletes.
+//     This is enforced by DB triggers in the migration, not merely by convention.
+
+// Node client — the seed, integration tests, and anything run with `node`.
+generator client {
+  provider = "prisma-client-js"
+  // queryCompiler replaces the Rust query engine with a WASM/TS one, so no
+  // native binary is emitted. Without this, Prisma ships a ~17 MB
+  // libquery_engine .so into the bundle — a Linux binary that cannot execute
+  // on Workers and on its own exceeds the worker size limit.
+  // Both driverAdapters and queryCompiler are GA in Prisma 6.19 and no longer
+  // need to be named as preview features.
+  engineType      = "client"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// Workers client. The generator above loads its WASM query compiler with
+// fs.readFileSync, which cannot work where there is no filesystem — on
+// Cloudflare it fails at query time with "[unenv] fs.readFileSync is not
+// implemented yet", long after a build that looked entirely healthy.
+//
+// This generator emits a client that imports the .wasm as a module instead,
+// which Wrangler bundles natively. It is aliased in over `@prisma/client` at
+// bundle time (see wrangler.jsonc), so application source keeps one import
+// path and Node keeps the client above.
+generator workersClient {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  runtime         = "workerd"
+  moduleFormat    = "esm"
+  // Same reason as above: the query compiler is WASM, the alternative is a
+  // ~17 MB native engine that cannot execute on Workers and alone exceeds the
+  // worker size limit.
+  engineType      = "client"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  // Runtime: Supabase transaction pooler (6543).
+  url        = env("DATABASE_URL")
+  // Migrations: direct connection (5432). The pooler cannot run DDL.
+  directUrl  = env("DIRECT_URL")
+  extensions = [postgis]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geography & disease control (MASTER_PROMPT §3.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// FMD / disease-control zones. Movement between zones requires a DVS permit;
+/// movement out of a restricted zone is prohibited outright.
+model Zone {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  /// Zone polygon. Used to derive a farm's zone from its coordinates.
+  boundary  Unsupported("geography(MultiPolygon, 4326)")?
+  createdAt DateTime @default(now())
+
+  farms        Farm[]
+  listings     Listing[]
+  restrictions ZoneRestriction[]
+
+  @@map("zones")
+}
+
+/// An active restriction suspends listings in the zone and hard-blocks
+/// transactions from advancing to READY_FOR_COLLECTION.
+model ZoneRestriction {
+  id          String    @id @default(cuid())
+  zoneId      String
+  zone        Zone      @relation(fields: [zoneId], references: [id])
+  kind        RestrictionKind
+  /// Null = movement blocked in all directions.
+  direction   MovementDirection?
+  reason      String
+  effectiveAt DateTime
+  liftedAt    DateTime?
+  declaredBy  String
+  createdAt   DateTime  @default(now())
+
+  @@index([zoneId, liftedAt])
+  @@map("zone_restrictions")
+}
+
+enum RestrictionKind {
+  FMD_OUTBREAK
+  QUARANTINE
+  ADMINISTRATIVE
+}
+
+enum MovementDirection {
+  INBOUND
+  OUTBOUND
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & verification (MASTER_PROMPT §8.1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  /// E.164. Phone is the primary identity — email is optional.
+  phone        String    @unique
+  phoneVerifiedAt DateTime?
+  email        String?   @unique
+  fullName     String?
+  preferredLocale Locale @default(TN)
+  tier         VerificationTier @default(T0_UNVERIFIED)
+  roles        UserRole[]
+  suspendedAt  DateTime?
+  suspendedReason String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  farms          Farm[]
+  verifications  Verification[]
+  listings       Listing[]
+  alertProfiles  AlertProfile[]
+  alertSends     AlertSend[]
+  offersMade     Offer[]
+  buyerTxns      Transaction[]  @relation("BuyerTransactions")
+  sellerTxns     Transaction[]  @relation("SellerTransactions")
+  ratingsGiven   Rating[]       @relation("RatingAuthor")
+  ratingsGot     Rating[]       @relation("RatingSubject")
+  disputesRaised Dispute[]      @relation("DisputeRaisedBy")
+  ownedAnimals   Animal[]       @relation("AnimalOwner")
+  stolenReports  StolenStockReport[]
+  fraudFlags     FraudFlag[]
+  payouts        Payout[]
+  sessions       Session[]
+
+  @@index([tier])
+  @@map("users")
+}
+
+enum Locale {
+  TN // Setswana — default
+  EN
+}
+
+enum UserRole {
+  FARMER
+  BUTCHER
+  FEEDLOT
+  TRANSPORTER
+  VET_OFFICER
+  AUCTIONEER
+  ADMIN
+  TRUST_OFFICER
+}
+
+/// Tiers gate capability. Enforced in middleware, never UI-only.
+enum VerificationTier {
+  T0_UNVERIFIED
+  T1_IDENTIFIED
+  T2_VERIFIED_FARMER
+  T3_TRUSTED_TRADER
+  TB_VERIFIED_BUTCHER
+  TT_VERIFIED_TRANSPORTER
+}
+
+model Verification {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  kind        VerificationKind
+  status      VerificationStatus @default(PENDING)
+  documentUrl String?
+  /// Never store raw national ID numbers in plaintext.
+  documentRefHash String?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  rejectionReason String?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, kind])
+  @@index([status])
+  @@map("verifications")
+}
+
+enum VerificationKind {
+  NATIONAL_ID
+  SELFIE_MATCH
+  FARM_REGISTRATION
+  BRAND_MARK
+  POLICE_CLEARANCE
+  BUSINESS_REGISTRATION
+  ABATTOIR_LICENCE
+  TRANSPORT_PERMIT
+  VEHICLE_REGISTRATION
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model Farm {
+  id         String   @id @default(cuid())
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id])
+  name       String
+  zoneId     String?
+  zone       Zone?    @relation(fields: [zoneId], references: [id])
+  /// Exact location — never exposed to non-committed buyers.
+  location   Unsupported("geography(Point, 4326)")?
+  /// Location snapped to ~5km grid for public display (§4.3).
+  publicLocation Unsupported("geography(Point, 4326)")?
+  district   String?
+  brandMarkUrl String?
+  createdAt  DateTime @default(now())
+
+  listings Listing[]
+
+  @@index([ownerId])
+  @@index([zoneId])
+  @@map("farms")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Listings & animals (MASTER_PROMPT §4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Listing {
+  id          String   @id @default(cuid())
+  sellerId    String
+  seller      User     @relation(fields: [sellerId], references: [id])
+  farmId      String
+  farm        Farm     @relation(fields: [farmId], references: [id])
+  zoneId      String?
+  zone        Zone?    @relation(fields: [zoneId], references: [id])
+
+  category    ListingCategory @default(CATTLE)
+  title       String
+  description String?
+  voiceNoteUrl String?
+
+  saleMechanism SaleMechanism @default(BEST_OFFER)
+  priceBasis    PriceBasis
+  /// Asking price in thebe, on the priceBasis unit.
+  askingPrice   BigInt
+  priceNegotiable Boolean @default(true)
+
+  quantity       Int     @default(1)
+  lotSplittable  Boolean @default(false)
+  minPurchaseQty Int     @default(1)
+
+  availableFrom  DateTime?
+  availableUntil DateTime?
+  collectionTerms CollectionTerms @default(BUYER_COLLECTS)
+  inspectionWelcome Boolean @default(true)
+
+  /// Category-specific attributes, validated per category by zod (src/domain/listing).
+  attributes Json?
+
+  status      ListingStatus @default(DRAFT)
+  publishedAt DateTime?
+  closedAt    DateTime?
+
+  /// Denormalised for match ranking; recomputed on publish.
+  sellerTierAtPublish VerificationTier?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  animals  ListingAnimal[]
+  media    ListingMedia[]
+  offers   Offer[]
+  transactions Transaction[]
+  alertSends AlertSend[]
+
+  @@index([status, publishedAt])
+  @@index([category, status])
+  @@index([sellerId])
+  @@map("listings")
+}
+
+enum ListingCategory {
+  CATTLE
+  SMALL_STOCK
+  POULTRY
+  PIGS
+  BREEDING_SERVICE
+  FEED_FODDER
+  CROPS_PRODUCE
+  BY_PRODUCTS
+  EQUIPMENT
+  GRAZING_LEASE
+}
+
+enum SaleMechanism {
+  FIXED_PRICE
+  BEST_OFFER
+  SEALED_BID_TENDER // Phase 2
+  TIMED_AUCTION     // Phase 3 — LICENCE-GATED, see MASTER_PROMPT §3.7
+  GROUP_BUY         // Phase 2
+}
+
+enum PriceBasis {
+  PER_HEAD
+  PER_KG_LIVE
+  PER_KG_CARCASS
+  PER_LOT
+}
+
+enum CollectionTerms {
+  BUYER_COLLECTS
+  SELLER_DELIVERS
+  NEGOTIABLE
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  PARTIALLY_COMMITTED
+  FULLY_COMMITTED
+  CLOSED
+  EXPIRED
+  CANCELLED
+  SUSPENDED
+}
+
+/// Individual cattle record (MASTER_PROMPT §4.2).
+///
+/// One row per real animal, keyed on its LITS ID for the animal's whole life —
+/// NOT one row per listing. An animal is sold, and then years later resold by
+/// its new owner, and both facts belong to the same record.
+///
+/// This is what makes provenance possible, and provenance is the anti-stock-theft
+/// feature (§3.3): the platform knows who sold this animal to whom, and a seller
+/// listing an animal the ledger says belongs to someone else is a hard flag.
+model Animal {
+  id        String  @id @default(cuid())
+
+  /// LITS traceability ID. Required for cattle. Globally unique for the
+  /// animal's lifetime.
+  litsId    String  @unique
+  /// Who holds this animal now. Updated on settled transfer, never on listing.
+  currentOwnerId String?
+  currentOwner   User?   @relation("AnimalOwner", fields: [currentOwnerId], references: [id])
+  firstSeenAt    DateTime @default(now())
+  brandMarkUrl String?
+
+  breed     CattleBreed?
+  sex       AnimalSex
+  dateOfBirth DateTime?
+  estimatedAgeMonths Int?
+  /// Dentition — the field butchers actually filter on.
+  dentition Int?
+  weightKg  Int?
+  weightMethod WeightMethod?
+  weighedAt DateTime?
+  bodyCondition Int?
+  hornStatus HornStatus?
+  pregnancyStatus PregnancyStatus?
+  pregnancyMonths Int?
+  lastDipDate DateTime?
+  temperament Temperament?
+
+  sireLitsId String?
+  damLitsId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  healthEvents AnimalHealthEvent[]
+  listings     ListingAnimal[]
+  transfers    AnimalTransfer[]
+
+  @@index([currentOwnerId])
+  @@map("animals")
+}
+
+/// Which animals are offered in which listing. An animal appears in many
+/// listings over its life — once per time it is sold.
+model ListingAnimal {
+  id        String  @id @default(cuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  animalId  String
+  animal    Animal  @relation(fields: [animalId], references: [id])
+  /// Set when a buyer claims specific animals from a splittable lot (§6.1).
+  claimedByTransactionId String?
+  position  Int     @default(0)
+
+  @@unique([listingId, animalId])
+  @@index([animalId])
+  @@map("listing_animals")
+}
+
+/// The provenance chain. Append-only: an animal's ownership history is
+/// evidence, and rewriting it is exactly what stock theft would require.
+model AnimalTransfer {
+  id            String   @id @default(cuid())
+  animalId      String
+  animal        Animal   @relation(fields: [animalId], references: [id])
+  fromUserId    String?
+  toUserId      String
+  transactionId String?
+  occurredAt    DateTime @default(now())
+
+  @@index([animalId, occurredAt])
+  @@index([toUserId])
+  @@map("animal_transfers")
+}
+
+enum CattleBreed {
+  TSWANA
+  BRAHMAN
+  SIMMENTAL
+  BONSMARA
+  AFRIKANER
+  COMPOSITE
+  OTHER
+}
+
+enum AnimalSex {
+  BULL
+  COW
+  OX
+  HEIFER
+  WEANER_MALE
+  WEANER_FEMALE
+  CALF
+}
+
+enum WeightMethod {
+  WEIGHBRIDGE
+  SCALE
+  TAPE_ESTIMATE
+  VISUAL_ESTIMATE
+}
+
+enum HornStatus {
+  HORNED
+  POLLED
+  DEHORNED
+}
+
+enum PregnancyStatus {
+  OPEN
+  PREGNANT
+  LACTATING
+  NOT_APPLICABLE
+}
+
+enum Temperament {
+  DOCILE
+  AVERAGE
+  WILD
+}
+
+model AnimalHealthEvent {
+  id        String   @id @default(cuid())
+  animalId  String
+  animal    Animal   @relation(fields: [animalId], references: [id])
+  kind      HealthEventKind
+  name      String
+  occurredAt DateTime
+  batchNumber String?
+  administeredBy String?
+  documentUrl String?
+  createdAt DateTime @default(now())
+
+  @@index([animalId])
+  @@map("animal_health_events")
+}
+
+enum HealthEventKind {
+  VACCINATION
+  DIPPING
+  TREATMENT
+  INSPECTION
+}
+
+model ListingMedia {
+  id        String   @id @default(cuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+  kind      MediaKind
+  url       String
+  /// EXIF-derived capture point, used for fraud detection (§8.3).
+  capturedAt DateTime?
+  capturedLocation Unsupported("geography(Point, 4326)")?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([listingId, position])
+  @@map("listing_media")
+}
+
+enum MediaKind {
+  PHOTO
+  VIDEO
+  DOCUMENT
+  VOICE_NOTE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts & matching (MASTER_PROMPT §9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AlertProfile {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  name     String
+
+  categories ListingCategory[]
+  breeds     CattleBreed[]
+  sexes      AnimalSex[]
+  minAgeMonths Int?
+  maxAgeMonths Int?
+  minWeightKg  Int?
+  maxWeightKg  Int?
+  maxPrice     BigInt?
+  priceBasis   PriceBasis?
+
+  centerPoint Unsupported("geography(Point, 4326)")?
+  radiusKm    Int     @default(150)
+  /// Auto-derived from movement feasibility; empty = no zone constraint.
+  zonesAllowed String[]
+
+  minSellerTier   VerificationTier?
+  minSellerRating Float?
+  keywords        String[]
+
+  channels    NotificationChannel[]
+  urgency     AlertUrgency @default(INSTANT)
+  quietHoursStart Int @default(21)
+  quietHoursEnd   Int @default(6)
+
+  activeFrom  DateTime?
+  activeUntil DateTime?
+  enabled     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sends AlertSend[]
+
+  @@index([userId])
+  @@index([enabled])
+  @@map("alert_profiles")
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  WHATSAPP
+  EMAIL
+  IN_APP
+  USSD
+}
+
+enum AlertUrgency {
+  INSTANT
+  HOURLY_DIGEST
+  DAILY_DIGEST
+}
+
+/// Every send is logged with its match score and downstream outcome, so the
+/// scoring weights can be tuned against real conversion (§9.2).
+model AlertSend {
+  id        String   @id @default(cuid())
+  profileId String
+  profile   AlertProfile @relation(fields: [profileId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+
+  channel   NotificationChannel
+  matchScore Float
+  status    SendStatus @default(QUEUED)
+  queuedAt  DateTime @default(now())
+  sentAt    DateTime?
+  deliveredAt DateTime?
+  openedAt  DateTime?
+  clickedAt DateTime?
+  /// Set if this alert eventually led to an offer — the conversion signal.
+  convertedOfferId String?
+  failureReason String?
+
+  @@unique([profileId, listingId, channel])
+  @@index([userId, queuedAt])
+  @@index([status])
+  @@map("alert_sends")
+}
+
+enum SendStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SUPPRESSED_RATE_LIMIT
+  SUPPRESSED_QUIET_HOURS
+  SUPPRESSED_DUPLICATE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Offers & transactions (MASTER_PROMPT §7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Offer {
+  id        String   @id @default(cuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+  buyerId   String
+  buyer     User     @relation(fields: [buyerId], references: [id])
+
+  /// Offered price in thebe on the listing's priceBasis.
+  amount    BigInt
+  quantity  Int      @default(1)
+  message   String?
+
+  status    OfferStatus @default(PENDING)
+  /// Set when this offer is a counter to a previous one — preserves the full thread.
+  parentOfferId String?
+  parent    Offer?   @relation("OfferThread", fields: [parentOfferId], references: [id])
+  counters  Offer[]  @relation("OfferThread")
+
+  expiresAt DateTime
+  respondedAt DateTime?
+  createdAt DateTime @default(now())
+
+  transaction Transaction?
+
+  @@index([listingId, status])
+  @@index([buyerId])
+  @@index([status, expiresAt])
+  @@map("offers")
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  COUNTERED
+  WITHDRAWN
+  EXPIRED
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id])
+  offerId   String?  @unique
+  offer     Offer?   @relation(fields: [offerId], references: [id])
+
+  buyerId   String
+  buyer     User     @relation("BuyerTransactions", fields: [buyerId], references: [id])
+  sellerId  String
+  seller    User     @relation("SellerTransactions", fields: [sellerId], references: [id])
+
+  state     TransactionState @default(OFFER_MADE)
+
+  /// Agreed price at acceptance, in thebe.
+  agreedAmount   BigInt
+  quantity       Int    @default(1)
+  priceBasis     PriceBasis
+  /// Declared total weight at agreement, for kg-based settlement.
+  declaredWeightKg Int?
+  /// Actual weight recorded at collection (§7.3).
+  actualWeightKg   Int?
+  weightTolerancePct Int @default(5)
+  /// Final settled amount after any weight adjustment (§3.4).
+  settledAmount  BigInt?
+  platformFee    BigInt?
+
+  /// Movement permit, when the trade crosses zones.
+  permitRequired Boolean @default(false)
+  permitNumber   String?
+  permitDocumentUrl String?
+  permitApprovedAt DateTime?
+
+  /// 6-digit collection handshake code, hashed.
+  collectionCodeHash String?
+  collectedAt    DateTime?
+
+  /// Deadline for the current state's auto-action (§7.2).
+  stateDeadline  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events   TransactionEvent[]
+  payments Payment[]
+  ratings  Rating[]
+  disputes Dispute[]
+  journalEntries JournalEntry[]
+
+  @@index([state, stateDeadline])
+  @@index([buyerId])
+  @@index([sellerId])
+  @@map("transactions")
+}
+
+/// Mirrors MASTER_PROMPT §7.2. Every state has a timeout with an auto-action.
+enum TransactionState {
+  OFFER_MADE
+  OFFER_ACCEPTED
+  ESCROW_PENDING
+  ESCROW_FUNDED
+  PERMIT_PENDING
+  READY_FOR_COLLECTION
+  IN_TRANSIT
+  DELIVERED
+  INSPECTION_WINDOW
+  SETTLED
+  DISPUTED
+  RESOLVED
+  REVERSED
+  CANCELLED
+  CLOSED
+}
+
+/// APPEND-ONLY. Livestock disputes reach real arbitration; this log is the evidence.
+model TransactionEvent {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  fromState     TransactionState?
+  toState       TransactionState
+  actorId       String?
+  actorRole     String?
+  reason        String?
+  metadata      Json?
+  occurredAt    DateTime @default(now())
+
+  @@index([transactionId, occurredAt])
+  @@map("transaction_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Money: double-entry ledger (MASTER_PROMPT §7.4–7.5)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The platform holds the trust account directly, so this is a core subsystem,
+// not an integration. Invariants, enforced in code AND by DB constraint:
+//   - Every JournalEntry's lines sum to exactly zero.
+//   - Entries are append-only. Corrections are new reversing entries, never edits.
+//   - Client funds (trust) and platform funds (operating) are distinct accounts and
+//     the account key namespace makes commingling structurally impossible.
+
+/// APPEND-ONLY.
+model JournalEntry {
+  id        String   @id @default(cuid())
+  /// Idempotency key — replaying the same business event must not double-post.
+  eventKey  String   @unique
+  event     LedgerEvent
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  narrative String
+  metadata  Json?
+  occurredAt DateTime @default(now())
+  postedBy   String?
+
+  lines JournalLine[]
+
+  @@index([event, occurredAt])
+  @@index([transactionId])
+  @@map("journal_entries")
+}
+
+/// APPEND-ONLY. Signed amounts in thebe: positive = debit, negative = credit.
+model JournalLine {
+  id       String   @id @default(cuid())
+  entryId  String
+  entry    JournalEntry @relation(fields: [entryId], references: [id])
+  /// Structured account key, e.g. "bank:trust", "user:{id}:payable", "txn:{id}:held".
+  account  String
+  /// Which side of the wall this account sits on. Guards against commingling.
+  fundClass FundClass
+  amount   BigInt
+
+  @@index([account])
+  @@index([entryId])
+  @@map("journal_lines")
+}
+
+/// The hard wall between client money and platform money (§7.4 rule 1).
+enum FundClass {
+  CLIENT_TRUST
+  PLATFORM_OPERATING
+}
+
+enum LedgerEvent {
+  DEPOSIT_RECEIVED
+  DEPOSIT_CONFIRMED
+  ESCROW_FUNDED
+  SETTLEMENT
+  FEE_SWEEP
+  PAYOUT_EXECUTED
+  REFUND_ISSUED
+  PARTIAL_REFUND
+  DISPUTE_HOLD
+  DISPUTE_RELEASE
+  SYNDICATE_PLEDGE_FUNDED
+  SYNDICATE_LAPSED
+  DEFAULT_DEPOSIT_FORFEITED
+  CORRECTION
+}
+
+/// Money in. Stays PENDING until bank-confirmed — never advance a transaction on
+/// payment initiation alone (§7.4).
+model Payment {
+  id        String   @id @default(cuid())
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  payerId   String
+  method    PaymentMethod
+  amount    BigInt
+  status    PaymentStatus @default(PENDING)
+  /// Provider's reference, for reconciliation against the bank statement.
+  externalRef String?  @unique
+  initiatedAt DateTime @default(now())
+  confirmedAt DateTime?
+  failureReason String?
+
+  @@index([status])
+  @@index([transactionId])
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  ORANGE_MONEY
+  MYZAKA
+  BANK_EFT
+  CASH_DEPOSIT
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REVERSED
+}
+
+/// Money out. Batched into payout runs (§7.4).
+model Payout {
+  id        String   @id @default(cuid())
+  payeeId   String
+  payee     User     @relation(fields: [payeeId], references: [id])
+  amount    BigInt
+  method    PaymentMethod
+  status    PayoutStatus @default(PENDING)
+  /// Dual authorisation above threshold — both must be distinct admin users.
+  authorisedBy   String?
+  coAuthorisedBy String?
+  batchId   String?
+  externalRef String?
+  requestedAt DateTime @default(now())
+  executedAt  DateTime?
+  failureReason String?
+
+  @@index([status])
+  @@index([batchId])
+  @@index([payeeId])
+  @@map("payouts")
+}
+
+enum PayoutStatus {
+  PENDING
+  AWAITING_AUTHORISATION
+  AUTHORISED
+  EXECUTED
+  FAILED
+  CANCELLED
+}
+
+/// Daily reconciliation: ledger trust total must equal the bank statement balance.
+/// Any variance raises a P1 and freezes payouts (§7.4 rule 4).
+model ReconciliationRun {
+  id            String   @id @default(cuid())
+  asOfDate      DateTime @db.Date
+  ledgerBalance BigInt
+  bankBalance   BigInt
+  variance      BigInt
+  status        ReconciliationStatus
+  payoutsFrozen Boolean  @default(false)
+  notes         String?
+  resolvedBy    String?
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([asOfDate])
+  @@map("reconciliation_runs")
+}
+
+enum ReconciliationStatus {
+  BALANCED
+  VARIANCE_DETECTED
+  RESOLVED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trust, reputation, disputes (MASTER_PROMPT §8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Blind two-sided: released only when both submit, or after 14 days.
+model Rating {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  authorId      String
+  author        User     @relation("RatingAuthor", fields: [authorId], references: [id])
+  subjectId     String
+  subject       User     @relation("RatingSubject", fields: [subjectId], references: [id])
+
+  accuracyOfDescription Int
+  communication         Int
+  punctuality           Int
+  conditionAsDescribed  Int?
+  comment               String?
+
+  releasedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([transactionId, authorId])
+  @@index([subjectId, releasedAt])
+  @@map("ratings")
+}
+
+model Dispute {
+  id            String   @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  raisedById    String
+  raisedBy      User     @relation("DisputeRaisedBy", fields: [raisedById], references: [id])
+  reason        DisputeReason
+  description   String
+  evidenceUrls  String[]
+  status        DisputeStatus @default(OPEN)
+  /// Funds frozen in escrow for the duration — neither party is paid.
+  heldAmount    BigInt?
+  resolution    String?
+  resolvedBy    String?
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([status])
+  @@index([transactionId])
+  @@map("disputes")
+}
+
+enum DisputeReason {
+  WEIGHT_MISMATCH
+  CONDITION_MISMATCH
+  ANIMAL_NOT_AS_DESCRIBED
+  NON_DELIVERY
+  NON_PAYMENT
+  LITS_MISMATCH
+  SUSPECTED_STOLEN
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+  RESOLVED_SPLIT
+  WITHDRAWN
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fraud & stock theft (MASTER_PROMPT §3.3, §8.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Reported LITS IDs are blocked from listing platform-wide.
+model StolenStockReport {
+  id         String   @id @default(cuid())
+  litsId     String
+  reportedById String
+  reportedBy User     @relation(fields: [reportedById], references: [id])
+  policeCaseNumber String?
+  reportedStolenAt DateTime
+  description String?
+  status     StolenReportStatus @default(ACTIVE)
+  verifiedBy String?
+  verifiedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([litsId, status])
+  @@map("stolen_stock_reports")
+}
+
+enum StolenReportStatus {
+  ACTIVE
+  RECOVERED
+  WITHDRAWN
+  UNVERIFIED
+}
+
+model FraudFlag {
+  id        String   @id @default(cuid())
+  kind      FraudFlagKind
+  severity  FlagSeverity
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  listingId String?
+  litsId    String?
+  detail    String
+  /// HARD flags freeze the subject immediately; SOFT flags queue for review.
+  autoFrozen Boolean @default(false)
+  status    FlagStatus @default(OPEN)
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([status, severity])
+  @@index([litsId])
+  @@map("fraud_flags")
+}
+
+enum FraudFlagKind {
+  DUPLICATE_LITS_ID
+  STOLEN_LITS_ID
+  PRICE_FAR_BELOW_INDEX
+  IMAGE_REUSE
+  EXIF_LOCATION_MISMATCH
+  OFF_PLATFORM_CONTACT
+  LISTING_VELOCITY
+  DISPUTE_PATTERN
+  NEW_ACCOUNT_HIGH_VALUE
+}
+
+enum FlagSeverity {
+  HARD
+  SOFT
+}
+
+enum FlagStatus {
+  OPEN
+  CONFIRMED
+  DISMISSED
+}
+
+/// APPEND-ONLY. Every privileged action, especially escrow releases.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorRole String?
+  action    String
+  entityType String
+  entityId  String
+  before    Json?
+  after     Json?
+  ipAddress String?
+  userAgent String?
+  occurredAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, occurredAt])
+  @@map("audit_log")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication (MASTER_PROMPT §10.1 — phone-first OTP)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Email is not the primary identity here. Most users have a phone and no email,
+// and many share a device, so sessions are short-lived by default and the
+// verification tier — not the session — is what gates anything consequential.
+
+/// A one-time code sent by SMS. The code itself is never stored, only its hash.
+model OtpChallenge {
+  id          String   @id @default(cuid())
+  /// E.164.
+  phone       String
+  codeHash    String
+  /// Attempts consumed. The challenge dies at MAX_VERIFY_ATTEMPTS.
+  attempts    Int      @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  /// Coarse client fingerprint for abuse investigation, not for identity.
+  requestedIp String?
+  createdAt   DateTime @default(now())
+
+  @@index([phone, createdAt])
+  @@index([expiresAt])
+  @@map("otp_challenges")
+}
+
+/// A logged-in session. The bearer token is never stored, only its hash.
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  userAgent  String?
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// SMS delivery attempts.
+///
+/// Every send is recorded, successful or not. Two reasons this is not
+/// optional: support will field "I never got my code" constantly and there is
+/// no way to answer it without a log, and SMS is a metered cost that needs to
+/// be attributable when the bill arrives.
+///
+/// The message body is NEVER stored — it contains the one-time code.
+model SmsDelivery {
+  id          String   @id @default(cuid())
+  /// E.164, stored in full: a delivery log that masks the number cannot be
+  /// used to investigate a delivery failure for a specific user.
+  phone       String
+  kind        SmsKind
+  status      SmsStatus @default(QUEUED)
+  provider    String
+  /// Provider's message id, for reconciliation against their delivery reports.
+  providerRef String?
+  /// Cost as reported by the provider, e.g. "BWP 0.8000".
+  cost        String?
+  attempts    Int      @default(0)
+  failureCode String?
+  failureText String?
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([phone, createdAt])
+  @@index([status])
+  @@map("sms_deliveries")
+}
+
+enum SmsKind {
+  OTP
+  OFFER_RECEIVED
+  ESCROW_FUNDED
+  COLLECTION_CODE
+  ALERT_MATCH
+  SYNDICATE_DEADLINE
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  /// Provider rejected it permanently — retrying cannot help.
+  REJECTED
+}

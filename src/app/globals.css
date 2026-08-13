@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+/**
+ * Kraal design tokens.
+ *
+ * Built for a mid-range Android in bright sun, held by someone who may be
+ * reading slowly. That drives every choice here: large type, high contrast,
+ * touch targets you cannot miss with a working hand, and no decoration that
+ * costs a byte.
+ */
+
+@theme {
+  /* Earth and cattle-hide tones — legible in sunlight, unfussy. */
+  --color-kraal-50: #faf7f2;
+  --color-kraal-100: #f0e9dd;
+  --color-kraal-200: #ddcdb4;
+  --color-kraal-300: #c4a97f;
+  --color-kraal-500: #8a6a3c;
+  --color-kraal-700: #5a4426;
+  --color-kraal-900: #2e2214;
+
+  --color-veld-500: #4a7c3f;
+  --color-veld-600: #3b6432;
+  --color-veld-700: #2d4d26;
+
+  --color-warn-500: #c2701c;
+  --color-danger-500: #b3261e;
+
+  /* Minimum comfortable touch target. Bigger than the usual 44px: this is used
+     outdoors, one-handed, sometimes with dust on the screen. */
+  --spacing-touch: 3.5rem;
+}
+
+:root {
+  --background: var(--color-kraal-50);
+  --foreground: var(--color-kraal-900);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #17130d;
+    --foreground: #f0e9dd;
+  }
+}
+
+html {
+  /* Slightly larger base than default: the median user is over 50. */
+  font-size: 17px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.55;
+  min-height: 100dvh;
+}
+
+/* Respect the OS setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Visible focus for keyboard and switch-control users. */
+:focus-visible {
+  outline: 3px solid var(--color-veld-500);
+  outline-offset: 2px;
+}
+
+@utility touch-target {
+  min-height: var(--spacing-touch);
+  min-width: var(--spacing-touch);
+}

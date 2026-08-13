@@ -1,0 +1,11 @@
+{
+  "name": "Kraal",
+  "short_name": "Kraal",
+  "description": "Buy and sell livestock, farmer to farmer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf7f2",
+  "theme_color": "#4a7c3f",
+  "lang": "tn",
+  "icons": []
+}
