@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveSchema } from './client';
+import { resolveSchema } from './schema';
 
 /**
  * These guard a failure that is silent rather than loud.

@@ -2,6 +2,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 // Not '@prisma/client' directly: on Workers that client loads its WASM query
 // compiler from disk and fails at query time. See prisma-client.ts.
 import { PrismaClient } from './prisma-client';
+// Kept in its own module so that reading it does not construct a client.
+import { resolveSchema } from './schema';
 
 /**
  * Prisma client.
@@ -28,38 +30,6 @@ import { PrismaClient } from './prisma-client';
  */
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-/**
- * Which schema Prisma should address.
- *
- * On Supabase, Kraal lives in the `kraal` schema, isolated from an unrelated
- * application in `public`. Getting this wrong does not fail loudly — it points
- * a working application at the wrong half of a shared database.
- *
- * Two mechanisms are needed and they are NOT interchangeable:
- *
- *   - The `kraal_app` role carries a server-side `search_path`, which resolves
- *     unqualified names in RAW SQL (src/db/spatial.ts). It survives the
- *     transaction pooler because it is attached to the role, not the session.
- *
- *   - This option, which is what Prisma's generated model queries use. Prisma
- *     schema-qualifies them explicitly and defaults to `public`, so no
- *     search_path can influence them. Without it, `prisma.zone.findMany()`
- *     asks for `public.zones` and fails with P2021 even though a raw
- *     `SELECT * FROM zones` on the very same connection succeeds.
- *
- * Note it belongs in the adapter's SECOND argument. Passing it inside the pool
- * config is silently ignored — the mistake reads as "the option does nothing".
- *
- * Locally there is no separate schema and this returns undefined, leaving
- * Prisma on `public` as before.
- */
-export function resolveSchema(connectionString: string): string | undefined {
-  const explicit = process.env.DB_SCHEMA?.trim();
-  if (explicit) return explicit;
-  const fromUrl = /[?&]schema=([^&]+)/.exec(connectionString)?.[1];
-  return fromUrl ? decodeURIComponent(fromUrl) : undefined;
-}
 
 function createClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
