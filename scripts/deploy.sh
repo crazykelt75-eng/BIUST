@@ -54,7 +54,23 @@ DB_SCHEMA="$(sed -n 's/.*[?&]schema=\([^&]*\).*/\1/p' <<<"$DIRECT_URL")"
 export DB_SCHEMA
 [[ -n "$DB_SCHEMA" ]] || fail "Could not read the schema from DIRECT_URL"
 
-npx wrangler whoami > /dev/null 2>&1 || fail "wrangler is not logged in. Run: npx wrangler login"
+if ! npx wrangler whoami > /dev/null 2>&1; then
+  # Distinguish the two situations, because the fix for one is impossible in
+  # the other: `wrangler login` opens a browser, which no CI runner has.
+  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+    fail "CLOUDFLARE_API_TOKEN is set but Cloudflare rejects it.
+
+  The token is invalid, expired, or revoked — rotating it without updating the
+  secret leaves exactly this state. Create one from the 'Edit Cloudflare
+  Workers' template and update the CLOUDFLARE_API_TOKEN repository secret.
+
+  Note this does NOT stop the already-deployed worker from serving. If the live
+  site is also failing, that is a separate credential: the worker holds its own
+  copy of DATABASE_URL, so rotating the database password breaks every request
+  that touches the database until a deploy pushes the new one."
+  fi
+  fail "wrangler is not logged in. Run: npx wrangler login (or set CLOUDFLARE_API_TOKEN for CI)"
+fi
 
 # psql speaks libpq, which rejects Prisma's query parameters outright — it errors
 # on the URI rather than ignoring what it does not know. Drop them for psql;
